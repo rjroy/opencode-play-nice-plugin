@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "opencode_play_nice_plugin",
+  "project_id": "357e89e1-e006-4b95-b620-d33666372039"
+}
