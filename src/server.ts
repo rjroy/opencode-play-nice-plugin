@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { Plugin } from "@opencode/plugin";
 import type { SessionPrompt } from "@opencode/plugin/promise/session";
+import { readSettings } from "./config.js";
+import { classifyTone } from "./decision.js";
 import { checkPrompt } from "./prompt-boundary.js";
 import { feedbackRpc, readFeedbackReceipt, type FeedbackEvent } from "./rpc.js";
 
 /** Dependency boundary for native integration; not a configurable fixed policy. */
 export interface NativeBoundaryDependencies {
   /** The classifier/policy composition owns its deadline and unavailable policy. */
-  classify(text: string, signal?: AbortSignal): Promise<"allowed" | "blocked">;
+  classify(text: string, signal?: AbortSignal, deadline?: number): Promise<"allowed" | "blocked" | { outcome: "allowed" | "blocked"; message: string }>;
   feedbackTimeoutMs: number;
+  operationTimeoutMs?: number;
+  feedbackReserveMs?: number;
 }
 
 type FeedbackResult = "invoked" | "toast-failed" | "emit-failed" | "timeout" | "cancelled";
@@ -40,7 +44,7 @@ async function untilStopped<T>(work: () => Promise<T>, signal: AbortSignal): Pro
 
 /** Location-scoped native wiring, independent of the eventual Decision client. */
 export function createServerPlugin(dependencies: NativeBoundaryDependencies): Plugin.Plugin {
-  const { classify, feedbackTimeoutMs } = dependencies;
+  const { classify, feedbackTimeoutMs, operationTimeoutMs, feedbackReserveMs = 0 } = dependencies;
   if (!Number.isInteger(feedbackTimeoutMs) || feedbackTimeoutMs < 1 || feedbackTimeoutMs > 30000) {
     throw new RangeError("Play Nice feedback deadline must be an integer between 1 and 30000 ms");
   }
@@ -70,8 +74,9 @@ export function createServerPlugin(dependencies: NativeBoundaryDependencies): Pl
       });
       log("rpc-register-complete");
 
-      const notify = (feedback: FeedbackEvent): Promise<FeedbackResult> => {
+      const notify = (feedback: FeedbackEvent, timeoutMs: number): Promise<FeedbackResult> => {
         if (lifetime.signal.aborted) return Promise.resolve("cancelled");
+        if (timeoutMs <= 0) return Promise.resolve("timeout");
         let finish: FinishFeedback = () => false;
         const result = new Promise<FeedbackResult>(resolve => {
           let timer: ReturnType<typeof setTimeout> | undefined;
@@ -86,14 +91,14 @@ export function createServerPlugin(dependencies: NativeBoundaryDependencies): Pl
           // Install the waiter before emitting. A fast TUI can acknowledge
           // while native events.emit is still resolving its publish operation.
           pending.set(feedback.invocationID, finish);
-          timer = setTimeout(() => finish("timeout"), feedbackTimeoutMs);
+          timer = setTimeout(() => finish("timeout"), timeoutMs);
           lifetime.signal.addEventListener("abort", stop, { once: true });
         });
         log("feedback-emit-attempt", { invocationID: feedback.invocationID, outcome: feedback.outcome });
         // This API has no AbortSignal. Bound the receipt wait independently and
         // observe emission failure even if native publication finishes late.
         void Promise.resolve().then(() => {
-          if (lifetime.signal.aborted) return false;
+          if (lifetime.signal.aborted || !pending.has(feedback.invocationID)) return false;
           return rpc.events.emit("feedback", { ...feedback }).then(() => true);
         }).then(published => {
           log(published ? "feedback-emit-complete" : "feedback-emit-cancelled", { invocationID: feedback.invocationID });
@@ -106,7 +111,9 @@ export function createServerPlugin(dependencies: NativeBoundaryDependencies): Pl
 
       const handlePrompt = async (event: SessionPrompt): Promise<void> => {
         const invocationID = randomUUID();
+        const deadline = operationTimeoutMs === undefined ? undefined : Date.now() + operationTimeoutMs;
         let outcome: "allowed" | "blocked" | undefined;
+        let feedbackMessage: string | undefined;
         let feedbackFailure: FeedbackResult | undefined;
         try {
           await checkPrompt(event.prompt.text, {
@@ -114,11 +121,13 @@ export function createServerPlugin(dependencies: NativeBoundaryDependencies): Pl
               const started = Date.now();
               log("classification-attempt", { invocationID });
               try {
-                const value = await untilStopped(() => classify(text, lifetime.signal), lifetime.signal);
-                if (value !== "allowed" && value !== "blocked") throw new Error("Invalid Play Nice policy decision");
-                outcome = value;
+                const value = await untilStopped(() => classify(text, lifetime.signal, deadline === undefined ? undefined : deadline - feedbackReserveMs), lifetime.signal);
+                const decision = typeof value === "string" ? value : value?.outcome;
+                if (decision !== "allowed" && decision !== "blocked") throw new Error("Invalid Play Nice policy decision");
+                if (typeof value !== "string") feedbackMessage = value.message;
+                outcome = decision;
                 log("classification-complete", { invocationID, outcome, elapsedMs: Date.now() - started });
-                return value;
+                return decision;
               } catch {
                 log("classification-failed", { invocationID, reason: lifetime.signal.aborted ? "cancelled" : "dependency-failed", elapsedMs: Date.now() - started });
                 // Native may persist/log thrown hook errors. Do not forward an
@@ -129,8 +138,8 @@ export function createServerPlugin(dependencies: NativeBoundaryDependencies): Pl
             async notify(decision) {
               const result = await notify({
                 invocationID, sessionID: event.sessionID, messageID: event.messageID, outcome: decision,
-                message: decision === "blocked" ? "Prompt rejected by Play Nice. Edit your message and resubmit." : "Prompt allowed by Play Nice.",
-              });
+                message: feedbackMessage ?? (decision === "blocked" ? "Prompt rejected by Play Nice. Edit your message and resubmit." : "Prompt allowed by Play Nice."),
+              }, deadline === undefined ? feedbackTimeoutMs : Math.max(0, Math.min(feedbackTimeoutMs, deadline - Date.now())));
               log("feedback-settled", { invocationID, result });
               if (result !== "invoked") {
                 feedbackFailure = result;
@@ -190,10 +199,33 @@ export function createServerPlugin(dependencies: NativeBoundaryDependencies): Pl
   };
 }
 
-// The next composition bead connects the real Decision client and policy here.
-// Do not ship a fixed classifier, silently install a no-op, or read fixture-only
-// options from production. The native integration injects through the factory.
 export default {
   id: "play-nice",
-  setup() { throw new Error("Play Nice classifier/policy composition is not connected yet"); },
+  setup(context) {
+    const settings = readSettings(context.options);
+    const plugin = createServerPlugin({
+      operationTimeoutMs: settings.timeoutMs,
+      feedbackReserveMs: Math.max(1, Math.floor(settings.timeoutMs / 5)),
+      feedbackTimeoutMs: settings.timeoutMs,
+      async classify(text, signal, deadline) {
+        let result: Awaited<ReturnType<typeof classifyTone>>;
+        try {
+          result = await classifyTone({ text, endpoint: settings.endpoint, model: settings.model, deadline: deadline ?? Date.now(), signal }, { fetch: globalThis.fetch });
+        } catch {
+          log("decision-failed", { reason: "unexpected" });
+          return { outcome: "allowed", message: "Tone classification unavailable." };
+        }
+        if (result.status === "unavailable") {
+          log("decision-unavailable", { reason: result.reason });
+          return { outcome: "allowed", message: "Tone classification unavailable." };
+        }
+        const blocked = settings.autoReject && settings.rejectedCategories.includes(result.tone);
+        return {
+          outcome: blocked ? "blocked" : "allowed",
+          message: blocked ? `Tone: ${result.tone}. Prompt rejected; edit and resubmit.` : `Tone: ${result.tone}.`,
+        };
+      },
+    });
+    return plugin.setup(context);
+  },
 } satisfies Plugin.Plugin;
