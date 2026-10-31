@@ -2,13 +2,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { writeFileSync } from "node:fs";
-import { copyFile, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OpenCode } from "@opencode/client";
 import { Service } from "@opencode/client/service";
 import { fakeServices } from "./fake-services.js";
-import { contained, fixtureConfig, prepareIsolatedLaunch, type Inspect } from "./isolation.js";
+import { contained, fixtureConfig, prepareIsolatedLaunch, type FixtureProfile, type Inspect } from "./isolation.js";
 import { preflightExecutable } from "./native-binary.js";
 import { readinessFromOutput } from "./readiness.js";
 import { bounded, deferred, pause, record } from "./support.js";
@@ -50,25 +50,31 @@ async function stopChild(child: ChildProcessWithoutNullStreams) {
   if (groupExists(pid)) throw new Error("owned process group remains after cleanup");
 }
 
-async function copyPlugin(root: string) {
+async function copyPlugin(root: string, profile: FixtureProfile) {
   const plugin = join(root, "plugin");
   await mkdir(join(plugin, "src"), { recursive: true, mode: 0o700 });
-  await mkdir(join(plugin, "tests/native"), { recursive: true, mode: 0o700 });
-  for (const name of ["server", "tui", "rpc", "prompt-boundary"]) {
+  for (const name of ["server", "tui", "rpc", "prompt-boundary", "config", "decision", "tone"]) {
     await copyFile(fileURLToPath(new URL(`../../src/${name}.ts`, import.meta.url)), join(plugin, `src/${name}.ts`));
   }
-  await copyFile(fileURLToPath(new URL("./controlled-server.ts", import.meta.url)), join(plugin, "tests/native/controlled-server.ts"));
-  // A self-contained package snapshot: no project config, node_modules link,
-  // lifecycle scripts or package installation. Native supplies its plugin SDK.
-  await writeFile(join(plugin, "package.json"), JSON.stringify({
-    name: "opencode-play-nice-plugin", version: "0.0.0", type: "module",
-    exports: { "./server": "./tests/native/controlled-server.ts", "./tui": "./src/tui.ts", "./rpc": "./src/rpc.ts" },
-  }), { mode: 0o600, flag: "wx" });
+  const manifestPath = fileURLToPath(new URL("../../package.json", import.meta.url));
+  if (profile === "boundary") {
+    await mkdir(join(plugin, "tests/native"), { recursive: true, mode: 0o700 });
+    await copyFile(fileURLToPath(new URL("./controlled-server.ts", import.meta.url)), join(plugin, "tests/native/controlled-server.ts"));
+    const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+    if (!record(manifest) || !record(manifest.exports)) throw new Error("invalid project package manifest");
+    await writeFile(join(plugin, "package.json"), JSON.stringify({ ...manifest,
+      exports: { ...manifest.exports, "./server": "./tests/native/controlled-server.ts" },
+    }), { mode: 0o600, flag: "wx" });
+  } else {
+    // The assembled profile uses the actual manifest unchanged: no factory
+    // injection, replacement entrypoint, dependency install or node_modules link.
+    await copyFile(manifestPath, join(plugin, "package.json"));
+  }
   return plugin;
 }
 
 /** Nothing runs at module import. Only the explicit native suite calls this. */
-export async function nativeFixture() {
+export async function nativeFixture(profile: FixtureProfile = "boundary") {
   const executable = process.env.OPENCODE_TEST_BINARY;
   if (!executable) throw new Error("OPENCODE_TEST_BINARY is required; no PATH fallback or install is permitted");
   await preflightExecutable(executable);
@@ -76,7 +82,7 @@ export async function nativeFixture() {
   if (await inspect(anchor) !== "directory" || await realpath(anchor) !== anchor) throw new Error("untrusted fixture anchor");
   const root = await mkdtemp(join(anchor, "play-nice-native-"));
   const receiptPath = join(anchor, `play-nice-receipt-${randomBytes(16).toString("hex")}.json`);
-  const receipt: Record<string, string | number | boolean> = { status: "prepared", root };
+  const receipt: Record<string, string | number | boolean> = { status: "prepared", root, profile };
   const recordReceipt = (update: Record<string, string | number | boolean>) => {
     Object.assign(receipt, update);
     // Small synchronous receipts cannot interleave or delay attaching process
@@ -111,7 +117,7 @@ export async function nativeFixture() {
     await writeFile(receiptPath, JSON.stringify(receipt), { mode: 0o600, flag: "wx" });
     await Promise.all(["home", "xdg-config", "data", "cache", "state", "tmp", "config", "db", "workspace"].map(dir => mkdir(join(root, dir), { mode: 0o700 })));
     await writeFile(join(root, "empty.gitconfig"), "", { mode: 0o600, flag: "wx" });
-    const pluginPackage = await copyPlugin(root);
+    const pluginPackage = await copyPlugin(root, profile);
     const origin = await services.start();
     const password = randomBytes(24).toString("hex");
     const cwd = join(root, "workspace");
@@ -120,8 +126,8 @@ export async function nativeFixture() {
       XDG_DATA_HOME: join(root, "data"), XDG_CACHE_HOME: join(root, "cache"), XDG_STATE_HOME: join(root, "state"),
       TMPDIR: join(root, "tmp"), OPENCODE_CONFIG_DIR: join(root, "config"), OPENCODE_DB: join(root, "db/opencode.db"), GIT_CONFIG_GLOBAL: join(root, "empty.gitconfig"),
     };
-    const spec = await prepareIsolatedLaunch({ root, cwd, executable, providerOrigin: origin, pluginPackage, paths,
-      config: JSON.stringify(fixtureConfig(origin, pluginPackage)), password }, inspect);
+    const spec = await prepareIsolatedLaunch({ root, cwd, executable, providerOrigin: origin, pluginPackage, paths, profile,
+      config: JSON.stringify(fixtureConfig(origin, pluginPackage, profile)), password }, inspect);
     const launch = async (args: string[], phase: string) => {
       await recordReceipt({ phase: `${phase}-attempt` });
       const child = spawn(executable, args, { cwd: spec.cwd, env: spec.env, detached: true, stdio: "pipe" });
@@ -183,7 +189,7 @@ export async function nativeFixture() {
     const plugin = plugins.data.find(entry => entry.source.type === "local" && entry.source.path === pluginPackage);
     if (!plugin || plugin.id !== "play-nice" || plugin.state.status !== "active") throw new Error("owned Play Nice plugin failed to load (setup failure, not a behavioral RED)");
     await recordReceipt({ phase: "ready", pluginLoaded: true, identityVerified: true });
-    return { client, makeClient, services, location, options, close, recordReceipt, statusFor: (id: string) => statusesByID.get(id),
+    return { client, makeClient, services, location, options, close, recordReceipt, pluginPackage, statusFor: (id: string) => statusesByID.get(id),
       ownFollower(stop: () => Promise<void>) { followers.push(stop); } };
   } catch (error) {
     await recordReceipt({ status: "setup-failed" });

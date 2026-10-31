@@ -7,11 +7,16 @@ const directories = ["HOME", "OPENCODE_TEST_HOME", "XDG_CONFIG_HOME", "XDG_DATA_
 const files = ["OPENCODE_DB", "GIT_CONFIG_GLOBAL"] as const;
 export const forbiddenPorts = new Set([3000, 3001, 9443, 4173, 4317, 48763]);
 export const feedbackTimeoutMs = 2000;
+export type FixtureProfile = "boundary" | "assembled-default" | "assembled-reject" | "assembled-override";
 
-export function fixtureConfig(origin: string, pluginPackage: string) {
+export function fixtureConfig(origin: string, pluginPackage: string, profile: FixtureProfile = "boundary") {
+  const options = profile === "boundary" ? { classificationURL: `${origin}/classify`, feedbackTimeoutMs }
+    : { endpoint: `${origin}/v1/systemone`, timeoutMs: 2000,
+      ...(profile === "assembled-default" ? {} : { autoReject: true }),
+      ...(profile === "assembled-override" ? { rejectedCategories: ["frustrated"] } : {}) };
   return {
     model: "fixture-provider/fixture-model", update: "disable", share: "disabled", snapshots: false,
-    plugins: [{ package: pluginPackage, options: { classificationURL: `${origin}/classify`, feedbackTimeoutMs } }],
+    plugins: [{ package: pluginPackage, options }],
     providers: {
       "fixture-provider": {
         env: [], package: "@opencode/ai/providers/openai-compatible",
@@ -31,6 +36,7 @@ export interface IsolationInput {
   config: string;
   password: string;
   paths: Record<string, string>;
+  profile?: FixtureProfile;
 }
 
 export function contained(root: string, path: string): boolean {
@@ -56,6 +62,8 @@ async function checkPath(root: string, path: string, expected: "directory" | "fi
 /** Adapted from memory-loop/tests/opencode/isolation.ts. No host env input. */
 export async function prepareIsolatedLaunch(input: IsolationInput, inspect: Inspect) {
   const { root, cwd, executable, providerOrigin, pluginPackage, config, password } = input;
+  const profile = input.profile ?? "boundary";
+  if (!["boundary", "assembled-default", "assembled-reject", "assembled-override"].includes(profile)) fail("unknown fixture profile");
   const paths = { ...input.paths };
   if (!isAbsolute(executable) || normalize(executable) !== executable || executable.includes("\0")) fail("invalid binary selector");
   if (!contained("/tmp/opencode", root) || !contained(root, cwd)) fail("invalid root or workspace");
@@ -66,7 +74,7 @@ export async function prepareIsolatedLaunch(input: IsolationInput, inspect: Insp
   if (!password) fail("missing password");
   let value: unknown;
   try { value = JSON.parse(config); } catch { fail("invalid configuration JSON"); }
-  if (!isDeepStrictEqual(value, fixtureConfig(providerOrigin, pluginPackage))) fail("configuration is not the exact owned profile");
+  if (!isDeepStrictEqual(value, fixtureConfig(providerOrigin, pluginPackage, profile))) fail("configuration is not the exact owned profile");
   for (const selector of [...directories, ...files]) {
     if (!paths[selector] || !contained(root, paths[selector])) fail(`invalid ${selector}`);
   }
@@ -75,7 +83,9 @@ export async function prepareIsolatedLaunch(input: IsolationInput, inspect: Insp
   for (const selector of directories) await checkPath(root, paths[selector] ?? fail(selector), "directory", inspect);
   await checkPath(root, paths.OPENCODE_DB ?? fail("OPENCODE_DB"), "database", inspect);
   await checkPath(root, paths.GIT_CONFIG_GLOBAL ?? fail("GIT_CONFIG_GLOBAL"), "file", inspect);
-  for (const path of ["package.json", "tests/native/controlled-server.ts", "src/server.ts", "src/tui.ts", "src/rpc.ts", "src/prompt-boundary.ts"]) {
+  const packageFiles = ["package.json", "src/server.ts", "src/tui.ts", "src/rpc.ts", "src/prompt-boundary.ts", "src/config.ts", "src/decision.ts", "src/tone.ts"];
+  if (profile === "boundary") packageFiles.push("tests/native/controlled-server.ts");
+  for (const path of packageFiles) {
     await checkPath(root, join(pluginPackage, path), "file", inspect);
   }
   // Copy only the named selectors. Even extra caller-supplied paths cannot

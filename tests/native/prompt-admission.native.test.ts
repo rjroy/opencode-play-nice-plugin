@@ -1,7 +1,5 @@
-import { randomBytes } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { SessionMessageInfo } from "@opencode/client";
 import { expect, it } from "vitest";
 import productionTui from "../../src/tui.js";
 import { nativeFixture, type NativeFixture } from "./fixture.js";
@@ -9,65 +7,14 @@ import { feedbackTimeoutMs } from "./isolation.js";
 import { rpcReceiptClient } from "./rpc-receipt-client.js";
 import { nativeReceiptGate, recordingTuiContext, type RecordedToast } from "./production-tui.js";
 import { bounded, pause } from "./support.js";
+import { completed, identity, noAdmission, prompt, session } from "./session.js";
 
-const identity = (prefix: "ses" | "msg") => `${prefix}_fixture_${randomBytes(12).toString("hex")}`;
-async function session(fixture: NativeFixture) {
-  return fixture.client.session.create({
-    id: identity("ses"), title: "Play Nice owned admission fixture", location: fixture.location,
-    model: { providerID: "fixture-provider", id: "fixture-model" },
-    permissions: [{ action: "*", resource: "*", effect: "deny" }],
-  }, fixture.options());
-}
-async function messages(fixture: NativeFixture, sessionID: string): Promise<SessionMessageInfo[]> {
-  const all: SessionMessageInfo[] = [];
-  const seen = new Set<string>();
-  let cursor: string | undefined;
-  for (let page = 0; page < 10; page++) {
-    const value = await fixture.client.message.list({ sessionID, limit: 50, ...(cursor ? { cursor } : { order: "asc" as const }) }, fixture.options());
-    all.push(...value.data);
-    const next = value.cursor.next;
-    if (!next || !value.data.length) return all;
-    if (seen.has(next)) throw new Error("repeated native history cursor");
-    seen.add(next); cursor = next;
-  }
-  throw new Error("unexpected fixture history size");
-}
-function prompt(fixture: NativeFixture, sessionID: string, id: string, text: string) {
-  let settled = false;
-  // No timeout abort is mistaken for a native rejection: inspect HTTP 500 below.
-  const result = fixture.client.session.prompt({ sessionID, id, text }, fixture.options()).then(
-    admission => { settled = true; return { kind: "admitted" as const, admission }; },
-    error => { settled = true; return { kind: "rejected" as const, error }; },
-  );
-  fixture.ownFollower(async () => { await bounded(result, "owned prompt request cleanup", 3000); });
-  return { result, settled: () => settled };
-}
 async function classifierEntered(fixture: NativeFixture, text: string, pending: ReturnType<typeof prompt>) {
   const first = await bounded(Promise.race([
     fixture.services.seen(text).then(() => "classifier-entered"),
     pending.result.then(value => value.kind === "admitted" ? "prompt admitted before classifier" : "prompt rejected before classifier"),
   ]), "controlled classifier entry");
   expect(first, "Missing native Play Nice prompt hook: admission must wait for our classifier").toBe("classifier-entered");
-}
-async function noAdmission(fixture: NativeFixture, sessionID: string, id: string, providerBaseline: number, peer?: Awaited<ReturnType<typeof rpcReceiptClient>>) {
-  expect((await fixture.client.session.inbox.list({ sessionID }, fixture.options())).some(item => item.id === id), "blocked input is in durable inbox").toBe(false);
-  expect((await messages(fixture, sessionID)).some(item => item.id === id), "blocked input is in canonical history").toBe(false);
-  expect(fixture.services.providerAttempts, "provider dispatched while prompt was held/blocked").toBe(providerBaseline);
-  if (peer) expect(peer.admissions.has(id), "blocked input emitted a durable admission event").toBe(false);
-}
-async function completed(fixture: NativeFixture, sessionID: string, messageID: string, text: string) {
-  const deadline = Date.now() + 12000;
-  while (Date.now() < deadline) {
-    const history = await messages(fixture, sessionID);
-    const user = history.find(item => item.id === messageID);
-    const response = history.find(item => item.type === "assistant" && item.time.completed !== undefined && item.finish === "stop" && !item.error &&
-      item.content.some(part => part.type === "text" && part.text === "fixture-model-ok"));
-    const info = await fixture.client.session.get({ sessionID }, fixture.options());
-    const active = await fixture.client.session.active(fixture.options());
-    if (user?.type === "user" && user.text === text && response && info.outcome === "succeeded" && !active[sessionID]) return;
-    await pause(30);
-  }
-  throw new Error("allowed prompt canonical completion timed out");
 }
 
 it("holds before admission/dispatch, awaits the invocation receipt, rejects, then accepts an edited prompt (RPC peer, not visible TUI proof)", async () => {

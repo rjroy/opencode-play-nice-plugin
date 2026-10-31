@@ -1,6 +1,6 @@
 # Native admission test (explicit opt-in)
 
-Authored for OpenCode **2.2.2**, Linux x64, Node >=22 (Vitest 5), and the
+Authored for OpenCode **2.2.2**, Linux x64, Node 22.15+ (22.x), 24.x or 26+ (Vitest 5), and the
 already-installed dependencies in `bun.lock`. Native execution is explicit.
 
 From the repository root, after `bun install --frozen-lockfile` if needed:
@@ -10,13 +10,40 @@ OPENCODE_TEST_BINARY=/home/rjroy/.local/share/mise/installs/npm-opencode-cli/2.2
   bun --no-env-file run test:native -t 'holds before admission/dispatch'
 ```
 
-All native cases (including negative receipt, missing receipt, no peer, and the
-headless production TUI handler):
+All native cases (including negative receipt, missing receipt, no peer, the
+headless production TUI handler, and assembled default-package behavior):
 
 ```sh
 OPENCODE_TEST_BINARY=/home/rjroy/.local/share/mise/installs/npm-opencode-cli/2.2.2/node_modules/.mise/@opencode+cli@2.2.2/node_modules/@opencode/cli/bin/opencode.exe \
   bun --no-env-file run test:native
 ```
+
+## Assembled default package
+
+```sh
+OPENCODE_TEST_BINARY=/home/rjroy/.local/share/mise/installs/npm-opencode-cli/2.2.2/node_modules/.mise/@opencode+cli@2.2.2/node_modules/@opencode/cli/bin/opencode.exe \
+  bun --no-env-file run test:native:assembled
+```
+
+`assembled-plugin.native.test.ts` copies the actual root manifest unchanged
+and all seven production modules. Native resolves the production default
+`./server`, never the fixed-classification wrapper. The headless handler imports
+the actual package `./tui` export; native inventory must expose server/TUI/RPC
+features. This is package/API evidence, not a rendered native TUI host.
+
+Approved guard profiles permit only the owned package and fake loopback Decision
+endpoint/provider. Scripted choice replies, HTTP error, malformed answer and a
+held timeout exercise the real Decision client; no local `d3` call is automatic.
+Coverage includes all five reports, opt-in/default/override rejection, current
+text without earlier history, receipt ordering, no blocked admission/dispatch,
+edit/resubmit, retry/concurrent IDs and an actual recording-toast exception.
+Independent assembled source-package checks passed. The separate non-native
+`test:package` command runs source/export contract tests and the durable
+`node scripts/check-package.mjs` compiled host-load check. Run `build` first.
+The root source exports remain unchanged; the compiled check requires exact
+`dist/*.js` targets and cannot fall back to source. See the root
+[Packaging documentation](../../README.md#packaging). The existing native cases
+do not copy `dist` artifacts or prove compiled-native behavior.
 
 ## Production TUI handler (headless)
 
@@ -54,13 +81,14 @@ checks `--version` using the isolated environment. It never selects PATH,
 installs native packages, discovers a personal service, or edits host config.
 Do not remove system config to make this pass.
 
-The fixture copies only the four named source files plus a test-only dependency
-adapter into a fresh owned package. Config uses `plugins: [{ package: absolute,
-options: { classificationURL, feedbackTimeoutMs } }]`. The adapter injects a held
-classifier into **our real server factory**; it does not register a test prompt
-hook or receipt handler. The guard permits exactly that owned package/options
-and one fake loopback provider. HOME, every XDG home, DB, config and git config
-are test-owned; the native environment is constructed without host spreading.
+The original `boundary` profile copies all production modules plus a test-only
+dependency adapter, replacing only the server export. Its config uses `plugins:
+[{ package: absolute, options: { classificationURL, feedbackTimeoutMs } }]`.
+That adapter injects a held classifier into **our real server factory**; it does
+not register a substitute prompt hook or receipt handler. Assembled profiles do
+not copy/use the adapter and instead pass actual endpoint/policy options through
+`ctx.options`. HOME, every XDG home, DB, config and git config are test-owned;
+the native environment is constructed without host spreading.
 
 Expected initial RED: the package loads as `play-nice` and the positive control
 completes through the fake provider, then the assertion
@@ -68,8 +96,8 @@ completes through the fake provider, then the assertion
 receives `prompt admitted before classifier` instead of `classifier-entered`.
 An import/setup/version/identity error is **not** this behavioral RED.
 That was the original skeleton's RED, not a requirement for the later handler
-coverage. The server factory now wires the native boundary and TUI transport;
-the default server entrypoint still awaits real classifier/policy composition.
+coverage. The server factory wires the native boundary/TUI transport; the
+production default now composes settings, the real Decision client and policy.
 
 After implementation the main test holds classification, checks no inbox/history
 admission or new provider attempts, releases a blocked decision, holds the

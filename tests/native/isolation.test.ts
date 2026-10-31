@@ -58,3 +58,15 @@ it("accepts only complete loopback readiness lines on non-application ports", ()
   expect(readinessFromOutput("server listening on http://127.0.0.1:54321\n")).toBe("http://127.0.0.1:54321");
   for (const line of ["server listening on http://0.0.0.0:54321\n", "server listening on http://127.0.0.1:3000\n", "server listening on http://127.0.0.1:54321"]) expect(readinessFromOutput(line)).toBeUndefined();
 });
+
+it.each(["assembled-default", "assembled-reject", "assembled-override"] as const)("allows only the owned Decision/provider endpoints for %s", async profile => {
+  const input = owned();
+  input.profile = profile;
+  input.config = JSON.stringify(fixtureConfig(input.providerOrigin, input.pluginPackage, profile));
+  const spec = await prepareIsolatedLaunch(input, inspect);
+  const config: unknown = JSON.parse(spec.env.OPENCODE_CONFIG_CONTENT);
+  expect(config).toMatchObject({ plugins: [{ package: input.pluginPackage, options: { endpoint: `${input.providerOrigin}/v1/systemone` } }] });
+  const unsafe = fixtureConfig(input.providerOrigin, input.pluginPackage, profile);
+  input.config = JSON.stringify({ ...unsafe, plugins: [{ package: input.pluginPackage, options: { endpoint: "http://localhost:11434/v1/systemone", timeoutMs: 2000 } }] });
+  await expect(prepareIsolatedLaunch(input, inspect)).rejects.toThrow("exact owned profile");
+});

@@ -2,11 +2,13 @@ import { once } from "node:events";
 import { createServer, type ServerResponse } from "node:http";
 import { forbiddenPorts } from "./isolation.js";
 import { bounded, deferred, record } from "./support.js";
+import { decisionFixture } from "./decision-fixture.js";
 
 /** No tools or outbound connections; records every provider attempt, even invalid ones. */
 export function fakeServices() {
   const providerBodies: string[] = [];
   const faults: string[] = [];
+  const decision = decisionFixture(faults);
   const seen = new Map<string, ReturnType<typeof deferred<void>>>();
   const held = new Map<string, ServerResponse>();
   const classificationCalls: string[] = [];
@@ -19,7 +21,8 @@ export function fakeServices() {
   const server = createServer((request, response) => {
     const provider = request.url === "/v1/chat/completions";
     if (provider) providerAttempts++;
-    if (request.method !== "POST" || (!provider && request.url !== "/classify")) {
+    const decisionRequest = request.url === "/v1/systemone";
+    if (request.method !== "POST" || (!provider && request.url !== "/classify" && !decisionRequest)) {
       faults.push("unexpected-route"); response.writeHead(404).end(); return;
     }
     let body = "";
@@ -33,6 +36,7 @@ export function fakeServices() {
       let value: unknown;
       try { value = JSON.parse(body); } catch { faults.push("invalid-json"); response.writeHead(400).end(); return; }
       if (!record(value)) { faults.push("invalid-shape"); response.writeHead(400).end(); return; }
+      if (decisionRequest) { decision.handle(value, response); return; }
       if (!provider) {
         if (typeof value.text !== "string") { faults.push("invalid-classifier-input"); response.writeHead(400).end(); return; }
         classificationCalls.push(value.text);
@@ -64,7 +68,7 @@ export function fakeServices() {
     });
   });
   return {
-    providerBodies, faults, classificationCalls,
+    providerBodies, faults, classificationCalls, decision,
     get providerAttempts() { return providerAttempts; },
     seen: (text: string) => classified(text).promise,
     release(text: string) {
@@ -82,6 +86,7 @@ export function fakeServices() {
       return `http://127.0.0.1:${address.port}`;
     },
     async close() {
+      decision.close();
       for (const response of held.values()) response.destroy();
       held.clear();
       if (!server.listening) return;

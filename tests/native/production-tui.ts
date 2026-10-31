@@ -84,6 +84,12 @@ export function nativeReceiptGate(fixture: NativeFixture, order: string[]) {
   const release = deferred<void>();
   const started = deferred<ObservedReceipt>();
   const replied = deferred<{ status: number; accepted: boolean }>();
+  const replies = new Map<string, ReturnType<typeof deferred<{ status: number; accepted: boolean }>>>();
+  const replyFor = (invocationID: string) => {
+    let reply = replies.get(invocationID);
+    if (!reply) { reply = deferred<{ status: number; accepted: boolean }>(); replies.set(invocationID, reply); }
+    return reply;
+  };
   const requests: ObservedReceipt[] = [];
   const client = fixture.makeClient(async (resource, init) => {
     const request = new Request(resource, init);
@@ -112,8 +118,11 @@ export function nativeReceiptGate(fixture: NativeFixture, order: string[]) {
     if (!record(value) || !record(value.output) || typeof value.output.accepted !== "boolean") {
       throw new Error("Unexpected native receipt response shape");
     }
-    replied.resolve({ status: response.status, accepted: value.output.accepted });
+    const result = { status: response.status, accepted: value.output.accepted };
+    replied.resolve(result);
+    replyFor(receipt.invocationID).resolve(result);
     return response;
   });
-  return { client, requests, started: started.promise, replied: replied.promise, release: () => release.resolve() };
+  return { client, requests, started: started.promise, replied: replied.promise,
+    replyFor: (invocationID: string) => replyFor(invocationID).promise, release: () => release.resolve() };
 }
