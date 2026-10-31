@@ -1,0 +1,27 @@
+{
+  "name": "opencode-play-nice-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server": "./src/server.ts",
+    "./tui": "./src/tui.ts",
+    "./rpc": "./src/rpc.ts"
+  },
+  "packageManager": "bun@1.4.3",
+  "scripts": {
+    "test": "vitest run tests/prompt-boundary.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:native": "vitest run --config tests/native/vitest.config.ts",
+    "test:native:guards": "vitest run --config tests/native/vitest.guards.config.ts"
+  },
+  "dependencies": {
+    "@opencode/client": "2.2.2",
+    "@opencode/plugin": "2.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}
