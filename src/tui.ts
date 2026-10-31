@@ -1,8 +1,24 @@
 import type { Plugin } from "@opencode/plugin/tui";
 import { feedbackRpc, readFeedbackEvent, readReceiptAccepted, type FeedbackEvent } from "./rpc.js";
 
-function log(state: string, details: Record<string, string | boolean> = {}) {
+const initialRetryDelayMs = 100;
+const maximumRetryDelayMs = 2000;
+
+function log(state: string, details: Record<string, string | number | boolean> = {}) {
   console.info("play_nice_tui", { state, ...details });
+}
+
+function waitForRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, delayMs);
+    signal.addEventListener("abort", finish, { once: true });
+  });
 }
 
 export default {
@@ -43,25 +59,37 @@ export default {
       } finally { clearTimeout(timer); }
     };
 
-    log("feedback-subscribe-attempt");
     const listener = (async () => {
-      for await (const event of rpc.events.subscribe("feedback", { signal: lifetime.signal })) {
+      let retryDelayMs = initialRetryDelayMs;
+      while (!lifetime.signal.aborted) {
+        log("feedback-subscribe-attempt");
+        try {
+          // An ended SDK iterator stays ended even when the host reconnects its
+          // shared stream. Finish this iterator before creating its replacement.
+          for await (const event of rpc.events.subscribe("feedback", { signal: lifetime.signal })) {
+            if (lifetime.signal.aborted) break;
+            retryDelayMs = initialRetryDelayMs;
+            const location = context.location ?? context.data.location.default();
+            const directory = event.location?.directory;
+            if (!directory || directory !== location.directory) continue;
+            const feedback = readFeedbackEvent(event.data);
+            if (!feedback) { log("feedback-invalid-event"); continue; }
+            // Concurrent prompts must not wait behind another receipt HTTP request.
+            // Toast invocation still runs synchronously before its own receipt.
+            const work = acknowledge(feedback, directory);
+            running.add(work);
+            void work.then(() => running.delete(work), () => running.delete(work));
+          }
+          if (!lifetime.signal.aborted) log("feedback-stream-ended");
+        } catch {
+          if (!lifetime.signal.aborted) log("feedback-stream-failed");
+        }
         if (lifetime.signal.aborted) break;
-        const location = context.location ?? context.data.location.default();
-        const directory = event.location?.directory;
-        if (!directory || directory !== location.directory) continue;
-        const feedback = readFeedbackEvent(event.data);
-        if (!feedback) { log("feedback-invalid-event"); continue; }
-        // Concurrent prompts must not wait behind another receipt HTTP request.
-        // Toast invocation still runs synchronously before its own receipt.
-        const work = acknowledge(feedback, directory);
-        running.add(work);
-        void work.then(() => running.delete(work), () => running.delete(work));
+        log("feedback-retry-scheduled", { delayMs: retryDelayMs });
+        await waitForRetry(retryDelayMs, lifetime.signal);
+        retryDelayMs = Math.min(retryDelayMs * 2, maximumRetryDelayMs);
       }
-      if (!lifetime.signal.aborted) log("feedback-stream-ended");
-    })().then(() => {}, () => {
-      log("feedback-stream-failed", { cancelled: lifetime.signal.aborted });
-    });
+    })();
     log("feedback-listener-started");
     return async () => {
       log("stop-attempt");

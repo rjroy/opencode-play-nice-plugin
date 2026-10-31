@@ -126,6 +126,11 @@ pixels, or that the user read the toast. OpenCode's generic rejection/error
 toast may immediately replace the tone explanation. The native integration
 tests use a headless recording toast, not a PTY or screenshot.
 
+If the event stream ends or fails, the TUI re-subscribes with nonzero, capped
+backoff; unload cancels both the subscription and any pending retry. This is
+not durable event replay: feedback emitted during a connection gap may still
+miss a receipt, and a rejected judgment remains blocked.
+
 Users **edit and resubmit** rejected messages; automatic composer restoration
 is not promised. Native API callers should use a new message ID for edited
 text: reusing an admitted ID can return the original admission, without
@@ -166,6 +171,16 @@ bun --no-env-file run typecheck
 bun --no-env-file run test:native:guards
 bun --no-env-file run build
 bun --no-env-file run test:package
+```
+
+`test` also runs the PN-TERM-1 reconnect regression explicitly through Node,
+using the actual pinned client with controlled SSE responses and a recording
+toast. It checks recovery after EOF/error, positive bounded retry delays and
+unload cancellation without sockets, a native process or a renderer. To run
+only that affected suite:
+
+```sh
+bun --no-env-file run test:reconnect
 ```
 
 `test:package` runs the source-export/build-command contract tests, then executes
