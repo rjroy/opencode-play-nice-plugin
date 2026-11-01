@@ -105,8 +105,9 @@ Enable rejection explicitly, for example:
 The ordered rubric is **0 abusive, 1 rude, 2 frustrated, 3 neutral, 4 kind**:
 higher is kinder. The score is a probability-weighted position and may be
 fractional, not a category or confidence. Confidence describes the distribution
-separately; this plugin does not gate on confidence. The raw score is reported
-and compared without rounding, including when rejection is disabled. With the
+separately; this plugin does not gate on confidence. Feedback reports the raw
+score and the nearest rubric identifier, with halfway values rounded toward the
+higher identifier. The raw score is compared without rounding, including when rejection is disabled. With the
 default cutoff, 1.49 is rejected and 1.5 is allowed when `autoReject` is true;
 equality is always allowed. A cutoff of 0 rejects no valid scores.
 
