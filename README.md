@@ -1,36 +1,43 @@
-# Play Nice for OpenCode 2.2.2
+# Play Nice for OpenCode
 
-A private, local V2 plugin that scores the tone of the **current user message**,
-reports the score, and optionally rejects scores below a configured threshold
-before native prompt admission.
-It judges message tone, not a person's character.
+Play Nice is a private, unreleased plugin for OpenCode 2.2.2 V2. It scores the
+tone of the current user message, attempts to show the result, and can optionally
+reject a message before admission. It judges wording, not character. You can
+also ask it to reflect on selected past evaluations in the current session.
+Play Nice skips scoring and rejection for sessions it identifies as child
+sessions. If the session lookup fails or times out, normal classification and
+rejection still apply.
 
-**Status:** the production server/client/policy and TUI receipt handler are
-implemented. Independent assembled native checks passed against the source
-package and the build passed independently. The compiled host-load check now
-uses a file entrypoint and requires an independent rerun. The package is private,
-not a published npm installation. See [Packaging](#packaging) for the two
-entrypoint choices.
+The package is built from this checkout, not installed from npm. Source-package
+native tests use a fake Decision service and a fake chat provider. They do not
+prove a visible TUI toast or native behavior of the compiled package.
 
-## Local package installation
+## Requirements
 
-Target the **OpenCode 2.2.2 V2** runtime. V1 plugin APIs are not compatible.
-The checkout pins Bun **1.4.3**, `@opencode/plugin` and `@opencode/client`
-**2.2.2**, TypeScript **5.9.3**, and Vitest **5.0.5** in `package.json`/`bun.lock`.
-Use Node 22.15+ within 22.x, 24.x, or 26+ for the Node-hosted runner and host
-import smoke (the pinned resolver uses `node:module.registerHooks`).
+- OpenCode 2.2.2 V2. V1 plugin APIs are not compatible.
+- Bun 1.4.3 and the dependencies pinned in `bun.lock`. Building and the
+  Node-hosted checks also need Node 22.15+ in the 22.x line, Node 24.x, or Node
+  26 or newer.
+- A separately running Decision API compatible with the Score request. The
+  defaults target `http://localhost:11434/v1/systemone` and model `d3`. This
+  project does not install the service, download the model, or start either one.
+  The endpoint must accept a JSON POST with `model`, `state`, and a `tone` score
+  question, and return a finite 0 to 4 score in `answers.tone.score` with
+  `answers.tone.type` set to `score`.
 
-In an existing trusted checkout:
+## Quick start
+
+From a trusted checkout, install the pinned dependencies and build the package:
 
 ```sh
 bun --no-env-file install --frozen-lockfile
 bun --no-env-file run build
-bun --no-env-file run typecheck
 ```
 
-Add an entry to your workspace's **`opencode.json` or `opencode.jsonc`**. Merge
-it with existing settings; do not overwrite unrelated provider or plugin config.
-Replace the example absolute directory with the actual checkout directory:
+Merge this entry into your workspace's `opencode.json` or `opencode.jsonc`.
+Replace the example path with the absolute path to this checkout's `dist`
+directory, and adjust the endpoint and model if your Decision service differs.
+Keep any existing plugins and settings.
 
 ```json
 {
@@ -39,271 +46,119 @@ Replace the example absolute directory with the actual checkout directory:
       "package": "/absolute/path/to/opencode-play-nice-plugin/dist",
       "options": {
         "endpoint": "http://localhost:11434/v1/systemone",
-        "model": "d3",
-        "autoReject": false,
-        "rejectBelowScore": 1.5
+        "model": "d3"
       }
     }
   ]
 }
 ```
 
-Use **`plugins` plural**, a package **directory**, and an `options` object—not
-a V1 hook file or `dist/server.js` path. No `.env` file is needed. Point at
-`dist/` for the compiled package after a successful build, or at the checkout
-root to develop against the existing TypeScript source package. Both packages
-expose the same three names, relative to the selected package directory:
+Use the package directory, not `dist/server.js`. Start OpenCode in the workspace
+and check `/plugins` for Play Nice. Send a message to try scoring. Rejection is
+off by default. Use `/play-nice` after an eligible evaluation to request
+reflection. Feedback uses the TUI, but a successful toast API call does not
+guarantee that a toast was rendered or read.
 
-| Package export | Checkout-root package | Compiled `dist/` package |
-|---|---|---|
-| `opencode-play-nice-plugin/server` | `src/server.ts` | `server.js` + `server.d.ts` |
-| `opencode-play-nice-plugin/tui` | `src/tui.ts` | `tui.js` + `tui.d.ts` |
-| `opencode-play-nice-plugin/rpc` | `src/rpc.ts` | `rpc.js` + `rpc.d.ts` |
+## Scores and feedback
 
-The root exports intentionally remain source paths for source consumers and the
-existing native fixture. `dist/package.json` is a separate generated private
-V2 manifest; merely building does not switch root imports to compiled code.
-Configure one package directory, not both source and compiled copies.
+The scale is **0 abusive, 1 rude, 2 frustrated, 3 neutral, 4 kind**. Scores
+may be fractional. They represent a position on the scale, not confidence or a
+verdict about the author. The feedback displays the score to two decimal places
+and the nearest label, with halfway values rounded toward the higher label.
+Model judgments can be wrong, including when text contains quotes or criticism.
 
-The pinned TUI discovers combined plugins from active server inventory and
-loads their `./tui` export; this handler needs no separate TUI options. Inspect
-`/plugins` after starting your trusted OpenCode 2.2.2 TUI in that workspace.
-The service operator separately supplies a compatible Decision API/model;
-this project does not install Ollama, download `d3`, or start a personal service.
+By default, scored messages are allowed. With `autoReject: true`, the plugin
+compares the unrounded score with `rejectBelowScore` and rejects scores strictly
+below it. At the default cutoff, 1.49 is rejected and 1.5 is allowed. Edit and
+resubmit a rejected message. Automatic composer restoration is not promised.
 
-## Settings and behavior
-
-| Option | Default | Accepted values |
-|---|---|---|
-| `autoReject` | `false` | Boolean; rejection is opt-in |
-| `rejectBelowScore` | `1.5` | Finite number from **0** to **4**; scores strictly below it are rejected when `autoReject` is enabled |
-| `endpoint` | `http://localhost:11434/v1/systemone` | HTTP/HTTPS URL without embedded username/password |
-| `model` | `d3` | Non-empty model string |
-| `timeoutMs` | `5000` | Integer from **1000** to **30000** milliseconds |
-
-Unknown settings, wrong types and invalid endpoints cause plugin setup to fail
-rather than being silently ignored. The removed `rejectedCategories` option
-must be replaced with `rejectBelowScore`; there is no exact category-to-score
-conversion. The rubric and scoring instructions are fixed; arbitrary prompts and
-confidence thresholds are not settings.
-
-Enable rejection explicitly, for example:
-
-```json
-{
-  "plugins": [{
-    "package": "/absolute/path/to/opencode-play-nice-plugin/dist",
-    "options": {
-      "autoReject": true,
-      "rejectBelowScore": 1.5,
-      "timeoutMs": 5000
-    }
-  }]
-}
-```
-
-The ordered rubric is **0 abusive, 1 rude, 2 frustrated, 3 neutral, 4 kind**:
-higher is kinder. The score is a probability-weighted position and may be
-fractional, not a category or confidence. Confidence describes the distribution
-separately; this plugin does not gate on confidence. Feedback reports the raw
-score and the nearest rubric identifier, with halfway values rounded toward the
-higher identifier. The raw score is compared without rounding, including when rejection is disabled. With the
-default cutoff, 1.49 is rejected and 1.5 is allowed when `autoReject` is true;
-equality is always allowed. A cutoff of 0 rejects no valid scores.
-
-Blunt
-criticism, frustration, profanity and quoted material are intended to be
-distinguished from personal attacks; model judgments can still be wrong.
-An allowed prompt follows OpenCode's normal provider/tool behavior.
+If classification times out, fails, or returns an invalid score, the prompt is
+allowed and the plugin attempts to report that classification was unavailable.
+Feedback failures do not turn a blocked decision into an allowed one. An
+allowed decision does not prove that OpenCode later admitted the message.
+Feedback receipts acknowledge a TUI API call, not visible pixels, and a generic
+native error may obscure a rejection notice. Rejection is not a security
+boundary against other plugins or other ways to interact with OpenCode.
 
 ## Reflect on tone
 
-Use `/play-nice` to review recent selected evaluations in the current session,
-or add a question, such as `/play-nice Why might that sound dismissive?` The
-session agent explains the wording and can suggest alternatives that preserve
-your intent and boundaries. Scores are fallible; directness is not itself abuse.
+- `/play-nice` reviews recent recorded evaluations in this session.
+- `/play-nice Why might that sound dismissive?` focuses the review on a question.
+- `/play-nice clear` removes the current session's Play Nice records. Only the
+  exact argument `clear` performs this action.
 
-Play Nice stores the original wording, score, time, model and policy outcome for
-evaluated attempts with scores from **2 through 3**, inclusive. This includes
-rejected attempts. An allowed evaluation does not prove the message was admitted.
-History is stored locally per plugin location and limited to 200 records.
-Reflection uses at most the latest 10 records from the current session, plus
-recent available session context. Records older than 30 days are excluded and,
-along with excess records, pruned on the next history read or write. An inactive
-disk store may retain expired records until then.
+The plugin records evaluated attempts with scores from **2 through 3**,
+inclusive, including rejected attempts. It stores the original wording,
+fractional score, time, session and message IDs, scoring model, and policy
+outcome. This range is selected evidence, not proof that the wording was rude.
+Reflection asks the session agent to consider the evidence and available recent
+context, suggest alternatives that preserve intent, and allow for scorer error.
 
-Use `/play-nice clear` to remove this session's records. Only the exact argument
-`clear` performs this action. When no records are available, or history cannot
-be accessed, Play Nice reports that instead of starting a reflection request.
-Clearing history does not erase OpenCode's own conversation history.
+The store is local to the plugin location. It retains at most 200 records per
+location and reflection selects at most the latest 10 for the current session.
+Records older than 30 days and excess records are pruned on a history read or
+write. An inactive store can therefore retain expired records until the next
+access. Clearing these records does not erase OpenCode's conversation history.
+If no records are available or history cannot be accessed, the plugin attempts
+to report that without starting a reflection request. A history write failure
+does not change the scoring policy's allow or reject decision.
 
-The history store is local, but reflection uses the session's selected agent and
-provider, which may be remote. The selected records and recent context are sent
-to that provider when you request reflection.
+## Configuration
 
-Scoring HTTP/transport failures, malformed responses and deadlines
-**allow the prompt** with an attempted “classification unavailable” notice.
-The overall classification/feedback budget is shared: the default composition
-reserves roughly one fifth for feedback instead of letting classification use
-the entire budget. This is a bounded operation, not a hard real-time guarantee.
+Place options in the plugin entry shown above. Omitted values use these defaults:
 
-For a rejected judgment, the server waits for a correlated TUI receipt and
-then deliberately throws from the pre-admission hook. No cancellation after
-admission is used. If toast invocation fails, the TUI disconnects, or a receipt
-times out, a **blocked judgment remains blocked**. An allowed/unavailable prompt
-is still allowed when feedback fails, with the notification failure logged.
+| Option | Default | Accepted values |
+| --- | --- | --- |
+| `autoReject` | `false` | Boolean |
+| `rejectBelowScore` | `1.5` | Finite number from 0 to 4, inclusive |
+| `endpoint` | `http://localhost:11434/v1/systemone` | HTTP or HTTPS URL without embedded username or password |
+| `model` | `d3` | Nonempty, non-whitespace string |
+| `timeoutMs` | `5000` | Integer from 1000 to 30000 milliseconds |
 
-### What a receipt proves
+For example, add `"autoReject": true` to the `options` object to enable
+rejection. `rejectBelowScore` only affects enforcement when rejection is on.
+The timeout is a shared operation budget, not a hard real-time guarantee.
+Unknown or invalid options fail setup. The former `rejectedCategories` option
+is not supported; use `rejectBelowScore` instead.
 
-The TUI calls `ui.toast.show`, then sends a per-invocation receipt through the
-native location-scoped RPC API. A successful receipt means that API call
-returned without throwing. It does **not** prove a rendered frame, visible
-pixels, or that the user read the toast. OpenCode's generic rejection/error
-toast may immediately replace the tone explanation. The native integration
-tests use a headless recording toast, not a PTY or screenshot.
+## Privacy
 
-If the event stream ends or fails, the TUI re-subscribes with nonzero, capped
-backoff; unload cancels both the subscription and any pending retry. This is
-not durable event replay: feedback emitted during a connection gap may still
-miss a receipt, and a rejected judgment remains blocked.
+Scoring sends the current message text, fixed scoring instructions, criteria,
+and model name to the configured Decision endpoint. It does not send the
+conversation history or attachment contents to that endpoint. The default
+endpoint is local; a different endpoint can send text to another machine.
 
-Users **edit and resubmit** rejected messages; automatic composer restoration
-is not promised. Native API callers should use a new message ID for edited
-text: reusing an admitted ID can return the original admission, without
-reclassification. Rejection is not a security boundary against other plugins,
-synthetic/control messages, shell actions or arbitrary external clients.
-
-## Privacy and model limitations
-
-The plugin sends the **current message text** as the Decision request's
-`state`, along with model name, fixed instructions and five criteria. It does
-not send conversation history or attachment contents to that endpoint. The
-default endpoint is local, but changing it can transmit the text to another
-machine; use only a trusted service. Native OpenCode and the chat provider
-still manage their own ordinary conversation/history and logging.
-
-Plugin logs contain state transitions, safe error categories, timing and
-non-content invocation IDs—not prompts, response bodies, credentials or raw
-upstream error text. Decision service and native/provider logs are outside
-that plugin logging promise. Test request bodies exist only as test-owned
-fixture observations; retained native receipts contain no prompt bodies.
-
-The existing [14-call local qualitative evaluation](.lore/work/research/local-d3-tone-evaluation.md)
-evaluated the former Choice contract, not the current Score contract; it does
-not validate Score behavior or its threshold. It found a quoted/task-data false positive: an insult
-presented for classification was labeled `rude`, despite the intended quote
-distinction. A severe personal insult also fell on the rude/abusive boundary.
-That small sample is not an accuracy estimate or a calibrated confidence
-guarantee. Evaluate Score judgments and thresholds on representative data.
-Automatic rejection stays opt-in; review judgment mistakes rather than assuming
-every quoted phrase will be scored correctly.
-
-## Validation
-
-Unit tests use test-owned inputs and mocked dependencies. The following unit,
-guard, build and packaging checks do not contact `d3` or start OpenCode:
-
-```sh
-bun --no-env-file run test
-bun --no-env-file run typecheck
-bun --no-env-file run test:native:guards
-bun --no-env-file run build
-bun --no-env-file run test:package
-```
-
-`test` also runs the PN-TERM-1 reconnect regression explicitly through Node,
-using the actual pinned client with controlled SSE responses and a recording
-toast. It checks recovery after EOF/error, positive bounded retry delays and
-unload cancellation without sockets, a native process or a renderer. To run
-only that affected suite:
-
-```sh
-bun --no-env-file run test:reconnect
-```
-
-`test:package` runs the source-export/build-command contract tests, then executes
-`node scripts/check-package.mjs` to resolve and load the actual compiled exports.
-It requires a successful build first; it does not substitute source for missing
-artifacts or run the compiler implicitly. See [Packaging](#packaging).
-
-The assembled integration uses an actual OpenCode 2.2.2 process, the real
-default server package and production headless TUI handler, a fake Decision
-API and a fake chat provider. Its previous Choice-based evidence does not
-validate the current Score contract. It does not use a
-live Ollama/Decision service or paid provider. An explicitly selected trusted
-Linux x64 installation is required; no PATH fallback or auto-install is used:
-
-```sh
-OPENCODE_TEST_BINARY=/absolute/installation/.mise/@opencode+cli@2.2.2/node_modules/@opencode/cli/bin/opencode.exe \
-  bun --no-env-file run test:native:assembled
-```
-
-The installation must include its matching sibling Linux x64 platform package.
-The pre-existing `/tmp/opencode` anchor must be trusted/non-linked, and
-`/etc/opencode` must be absent. Do not remove host configuration to pass a test.
-Each run owns its HOME, XDG directories, DB, config, workspace, HTTP listeners
-and process groups; cleanup verifies removal without touching personal services.
-See [native test prerequisites and commands](tests/native/README.md), including
-the retained boundary/failure cases and full explicit `test:native` command.
+Reflection history is stored locally, but reflection uses the current session's
+agent and provider, which may be remote. The selected records and available
+recent context are sent to that provider when you request reflection. OpenCode,
+the Decision service, and the chat provider manage their own history and logs.
+Play Nice's operational logs omit prompt text and raw upstream errors.
 
 ## Troubleshooting
 
-- **Plugin missing/failed:** check `/plugins`, the absolute directory, V2 version,
-  `plugins` spelling, exports and option types. A `dist` installation requires a
-  successful build. Source exports require the native Bun-capable loader, not
-  plain Node executing `.ts` as compiled JS.
-- **Classification unavailable:** check the configured service/model and its
-  `answers.tone.type: "score"` / finite `score` from 0 through 4, HTTP outcome and
-  timeout. Do not dump private messages or response bodies into diagnostics.
-- **Rejected with a generic error:** this is the pinned native throw mapping;
-  it can obscure the reason toast. Edit/resubmit, or deliberately disable
-  `autoReject` if the current model's mistakes are unacceptable.
-- **No tone toast:** ensure the TUI half is active in the same native location.
-  A missing receipt does not unblock a rejected judgment. Check safe plugin
-  lifecycle/feedback logs rather than interpreting a receipt as visual proof.
+- **Plugin missing or failed:** Check `/plugins`, the absolute package directory,
+  OpenCode version, `plugins` spelling, and option values. Build before pointing
+  the configuration at `dist`.
+- **Classification unavailable:** Check that the configured service is running,
+  the model is available, the endpoint accepts the Score request described above,
+  and its response has a valid score. Check the timeout without sharing private
+  message text or response bodies in diagnostics.
+- **No feedback toast:** Check that the TUI side is active in the same location.
+  Delivery or receipt can fail; a blocked judgment remains blocked even then.
+- **Reflection unavailable or empty:** Check that this session has evaluated
+  attempts in the 2 to 3 range and that plugin storage is available. Other
+  sessions' records are not included.
 
 ## Packaging
 
-`bun --no-env-file run build` runs `scripts/build.mjs`, which invokes the
-installed **TypeScript 5.9.3** compiler with `tsconfig.build.json`. It emits only
-production `src/` modules as ES2022/NodeNext ESM JavaScript and declarations,
-then writes a private `dist/package.json` with compiled `./server`, `./tui` and
-`./rpc` export targets and copies the license. It uses existing pinned
-dependencies; it neither downloads a compiler nor launches OpenCode.
+`bun --no-env-file run build` compiles production TypeScript into `dist/` and
+creates a private package manifest with `./server`, `./tui`, and `./rpc`
+exports. `dist/` is generated and replaced by each build. Do not put hand-written
+files there. The built package is for local use alongside this checkout and its
+locked dependencies, not a standalone published archive.
 
-**`dist/` is generated and replaced on each build.** Do not keep hand-written
-files there. The build refuses a linked/non-directory `dist` target, clears old
-generated output, fails on compiler errors and checks JS/declaration entrypoint
-files before packaging. `typecheck` still uses `--noEmit` and is not a build.
-The generated package is for local use alongside this checkout's locked
-dependency installation, not a published release or standalone npm archive.
-
-From the checkout root, independent verification must include the real build
-and the **compiled manifest's** entrypoint resolution/imports (not root source
-imports):
-
-```sh
-bun --no-env-file run build
-bun --no-env-file run test:package
-# Or rerun just the compiled check after a successful build:
-node scripts/check-package.mjs
-```
-
-The durable `.mjs` entrypoint selects ESM by filename without `--input-type`.
-The earlier stdin `node --input-type=module` command failed on Node 26.13 with
-`ERR_INPUT_TYPE_NOT_ALLOWED` during dynamic loading: that flag is only valid
-for stdin/eval and must not propagate into a file-based loader context. This
-was a check-invocation failure, not evidence of a compiled export defect.
-
-The check preserves the pinned V2 `Host.resolve` and `Host.load` calls, requires
-each selected entry to be its exact `dist/*.js` file, verifies the compiled
-manifest/declaration targets, and actually imports all three emitted modules.
-It does not call plugin setup, contact a classifier, or prove native behavior
-against `dist`. The existing six assembled native cases still copy source
-exports. Keep that evidence distinction when recording final checks or adding
-compiled-package native coverage; do not treat their source run as an artifact
-run. The replacement compiled-load command has not run in its writer turn.
-
-TypeScript is strict; use explicit typed dependency boundaries and keep native
-fixtures separate from production. Dependencies are pinned; use the lockfile
-rather than silently upgrading the OpenCode API family.
+For development, the checkout root also exports those names as source
+TypeScript. Configure either the root source package or `dist/`, not both.
+Source loading requires a compatible native loader. See [contributing](CONTRIBUTING.md)
+for checks and [native test instructions](tests/native/README.md) for the
+explicit opt-in integration fixture and its limits.
