@@ -244,7 +244,7 @@ export default {
           return { outcome: "allowed", message: "Tone classification unavailable." };
         }
         const blocked = settings.autoReject && result.score < settings.rejectBelowScore;
-        const scoreFeedback = `Tone score: ${result.score}/4 (${toneIdentifier(result.score)}; higher is kinder).`;
+        const scoreFeedback = `Tone score: ${result.score.toFixed(2)}/4 (${toneIdentifier(result.score)}; higher is kinder).`;
         return {
           outcome: blocked ? "blocked" : "allowed",
           message: blocked ? `${scoreFeedback} Prompt rejected; edit and resubmit.` : scoreFeedback,

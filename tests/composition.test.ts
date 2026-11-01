@@ -140,6 +140,16 @@ describe("default server policy composition", () => {
     } finally { if (!closed) await fixture.close(); }
   });
 
+  it.each([[0, "0.00"], [4, "4.00"], [2.123456789, "2.12"], [1.49999, "1.50"]] as const)("formats score %s as %s without changing rejection policy", async (score, display) => {
+    const fixture = await harness({ autoReject: true }, fetchTone(score));
+    try {
+      const outcome = score < 1.5 ? "blocked" : "allowed";
+      expect(await fixture.submit().then(() => "allowed", () => "blocked")).toBe(outcome);
+      expect(fixture.feedback[0]?.message).toContain(`Tone score: ${display}/4 (`);
+      if (score === 1.49999) expect(fixture.feedback[0]?.message).toContain("rude;");
+    } finally { await fixture.close(); }
+  });
+
   it.each(scores)("reports score %s and rubric identifier %s while allowing by default", async (score, identifier) => {
     const fixture = await harness({}, fetchTone(score));
     try {
