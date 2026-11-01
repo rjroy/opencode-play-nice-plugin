@@ -13,7 +13,12 @@ function fetchTone(tone: Tone): typeof fetch {
   return async () => new Response(JSON.stringify({ answers: { tone: { type: "choice", choice: tone } } }), { status: 200 });
 }
 
-async function harness(options: Record<string, unknown>, fetch: typeof globalThis.fetch, autoReceipt = true) {
+async function harness(
+  options: Record<string, unknown>,
+  fetch: typeof globalThis.fetch,
+  autoReceipt = true,
+  getSession: (input: { sessionID: string }) => Promise<{ parentID?: string }> = async () => ({}),
+) {
   vi.stubGlobal("fetch", fetch);
   const logs = vi.spyOn(console, "info").mockImplementation(() => {});
   let hook: ((event: SessionPrompt) => Promise<void> | void) | undefined;
@@ -28,7 +33,10 @@ async function harness(options: Record<string, unknown>, fetch: typeof globalThi
         if (autoReceipt && receipt) await receipt({ invocationID: data.invocationID, displayed: true }, { signal: new AbortController().signal });
       } } };
     } },
-    session: { hook: async (_name: string, callback: typeof hook) => { hook = callback; return { dispose: async () => {} }; } },
+    session: {
+      get: getSession,
+      hook: async (_name: string, callback: typeof hook) => { hook = callback; return { dispose: async () => {} }; },
+    },
   };
   const definition: Plugin.Plugin = server;
   const dispose = await definition.setup(context as unknown as Plugin.Context);
@@ -46,6 +54,88 @@ async function harness(options: Record<string, unknown>, fetch: typeof globalThi
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("default server policy composition", () => {
+  it("bypasses both classification and feedback for a child session", async () => {
+    const fetch = vi.fn(fetchTone("rude"));
+    const getSession = vi.fn(async (_input: { sessionID: string }) => ({ parentID: "ses_parent" }));
+    const fixture = await harness({ autoReject: true }, fetch, true, getSession);
+    try {
+      await expect(fixture.submit()).resolves.toBeUndefined();
+      expect(getSession).toHaveBeenCalledWith({ sessionID: "ses_fixture" });
+      expect(fetch).not.toHaveBeenCalled();
+      expect(fixture.feedback).toHaveLength(0);
+    } finally { await fixture.close(); }
+  });
+
+  it("still classifies and rejects a top-level session with feedback", async () => {
+    const fetch = vi.fn(fetchTone("rude"));
+    const getSession = vi.fn(async (_input: { sessionID: string }) => ({}));
+    const fixture = await harness({ autoReject: true }, fetch, true, getSession);
+    try {
+      await expect(fixture.submit()).rejects.toThrow();
+      expect(getSession).toHaveBeenCalledWith({ sessionID: "ses_fixture" });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fixture.feedback).toHaveLength(1);
+      expect(fixture.feedback[0]?.outcome).toBe("blocked");
+    } finally { await fixture.close(); }
+  });
+
+  it("retains classification and rejection feedback if session lookup fails", async () => {
+    const fetch = vi.fn(fetchTone("rude"));
+    const getSession = vi.fn(async (_input: { sessionID: string }): Promise<{ parentID?: string }> => {
+      throw new Error("fixture lookup failure");
+    });
+    const fixture = await harness({ autoReject: true }, fetch, true, getSession);
+    try {
+      await expect(fixture.submit()).rejects.toThrow();
+      expect(getSession).toHaveBeenCalledWith({ sessionID: "ses_fixture" });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fixture.feedback).toHaveLength(1);
+      expect(fixture.feedback[0]?.outcome).toBe("blocked");
+    } finally { await fixture.close(); }
+  });
+
+  it("enforces within the shared deadline after lookup timeout and ignores a late child result", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10000);
+    let resolveLookup: (session: { parentID?: string }) => void = () => { throw new Error("lookup not started"); };
+    const getSession = vi.fn((_input: { sessionID: string }) => new Promise<{ parentID?: string }>(resolve => {
+      resolveLookup = resolve;
+    }));
+    const fetch = vi.fn(fetchTone("rude"));
+    const fixture = await harness({ autoReject: true, timeoutMs: 1000 }, fetch, true, getSession);
+    try {
+      const pending = fixture.submit().then(() => "allowed", () => "rejected");
+      expect(getSession).toHaveBeenCalledWith({ sessionID: "ses_fixture" });
+      await vi.advanceTimersByTimeAsync(999);
+      expect(await pending).toBe("rejected");
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fixture.feedback).toHaveLength(1);
+      expect(fixture.feedback[0]?.outcome).toBe("blocked");
+
+      resolveLookup({ parentID: "ses_parent" });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fixture.feedback).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { await fixture.close(); }
+  });
+
+  it("cancels a pending session lookup when the plugin closes", async () => {
+    const fetch = vi.fn(fetchTone("rude"));
+    const getSession = vi.fn((_input: { sessionID: string }): Promise<{ parentID?: string }> => new Promise(() => {}));
+    const fixture = await harness({ autoReject: true }, fetch, true, getSession);
+    const pending = fixture.submit().then(() => "allowed", () => "rejected");
+    let closed = false;
+    try {
+      await vi.waitFor(() => expect(getSession).toHaveBeenCalledTimes(1));
+      await fixture.close();
+      closed = true;
+      expect(await pending).toBe("rejected");
+      expect(fetch).not.toHaveBeenCalled();
+      expect(fixture.feedback).toHaveLength(0);
+    } finally { if (!closed) await fixture.close(); }
+  });
+
   it.each(tones)("reports %s while allowing by default", async tone => {
     const fixture = await harness({}, fetchTone(tone));
     try {

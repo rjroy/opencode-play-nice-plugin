@@ -116,6 +116,29 @@ export function createServerPlugin(dependencies: NativeBoundaryDependencies): Pl
         let feedbackMessage: string | undefined;
         let feedbackFailure: FeedbackResult | undefined;
         try {
+          // Leave most of the shared operation budget for classification and feedback.
+          const lookupTimeoutMs = deadline === undefined || operationTimeoutMs === undefined ? feedbackTimeoutMs
+            : Math.max(0, Math.min(feedbackTimeoutMs, Math.floor(operationTimeoutMs / 5), deadline - Date.now()));
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          log("session-lookup-attempt", { invocationID });
+          try {
+            const session = await untilStopped(() => Promise.race([
+              context.session.get({ sessionID: event.sessionID }),
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("Session lookup timed out")), lookupTimeoutMs);
+              }),
+            ]), lifetime.signal);
+            if (lifetime.signal.aborted) throw new Error("Play Nice stopped before prompt admission");
+            const child = session.parentID !== undefined;
+            log("session-lookup-complete", { invocationID, child });
+            if (child) return;
+          } catch {
+            log("session-lookup-failed", { invocationID, reason: lifetime.signal.aborted ? "cancelled" : "unavailable" });
+            if (lifetime.signal.aborted) throw new Error("Play Nice stopped before prompt admission");
+            // Failure to identify a child never bypasses the existing policy.
+          } finally {
+            clearTimeout(timer);
+          }
           await checkPrompt(event.prompt.text, {
             async classify(text) {
               const started = Date.now();
