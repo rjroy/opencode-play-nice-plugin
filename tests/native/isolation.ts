@@ -83,7 +83,7 @@ export async function prepareIsolatedLaunch(input: IsolationInput, inspect: Insp
   for (const selector of directories) await checkPath(root, paths[selector] ?? fail(selector), "directory", inspect);
   await checkPath(root, paths.OPENCODE_DB ?? fail("OPENCODE_DB"), "database", inspect);
   await checkPath(root, paths.GIT_CONFIG_GLOBAL ?? fail("GIT_CONFIG_GLOBAL"), "file", inspect);
-  const packageFiles = ["package.json", "src/server.ts", "src/tui.ts", "src/rpc.ts", "src/prompt-boundary.ts", "src/config.ts", "src/decision.ts", "src/tone.ts"];
+  const packageFiles = ["package.json", "src/server.ts", "src/tui.ts", "src/rpc.ts", "src/prompt-boundary.ts", "src/config.ts", "src/decision.ts", "src/tone.ts", "src/history.ts"];
   if (profile === "boundary") packageFiles.push("tests/native/controlled-server.ts");
   for (const path of packageFiles) {
     await checkPath(root, join(pluginPackage, path), "file", inspect);

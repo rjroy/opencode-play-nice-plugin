@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Plugin } from "@opencode/plugin";
+import type { CommandDefinition, CommandEditor } from "@opencode/plugin/promise/command";
 import type { SessionPrompt } from "@opencode/plugin/promise/session";
 import server from "../src/server.js";
 import type { FeedbackEvent } from "../src/rpc.js";
+import { memoryStorage } from "./reflection-helpers.js";
 
 const scores = [
   [0, "abusive"], [0.49, "abusive"], [0.5, "rude"],
@@ -28,8 +30,18 @@ async function harness(
   let hook: ((event: SessionPrompt) => Promise<void> | void) | undefined;
   let receipt: ((value: { invocationID: string; displayed: boolean }, context: { signal: AbortSignal }) => Promise<{ accepted: boolean }>) | undefined;
   const feedback: FeedbackEvent[] = [];
+  const commands = new Map<string, CommandDefinition>();
   const context = {
     options,
+    storage: memoryStorage().storage,
+    command: { transform: async (transform: (editor: CommandEditor) => void) => {
+      const registered = new Set<string>();
+      transform({ add: definition => {
+        if (commands.has(definition.name)) throw new Error("duplicate fixture command");
+        commands.set(definition.name, definition); registered.add(definition.name);
+      } });
+      return { dispose: async () => { for (const name of registered) commands.delete(name); } };
+    } },
     rpc: { register: async (_definition: unknown, handlers: { receipt: typeof receipt }) => {
       receipt = handlers.receipt;
       return { dispose: async () => {}, events: { emit: async (_name: string, data: FeedbackEvent) => {
@@ -44,7 +56,7 @@ async function harness(
   };
   const definition: Plugin.Plugin = server;
   const dispose = await definition.setup(context as unknown as Plugin.Context);
-  if (!hook || !receipt) throw new Error("default server did not register prompt and feedback handlers");
+  if (!hook || !receipt || !commands.has("play-nice")) throw new Error("default server did not register prompt, feedback and command handlers");
   const registeredHook = hook;
   const registeredReceipt = receipt;
   return {

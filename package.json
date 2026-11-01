@@ -11,7 +11,7 @@
   "packageManager": "bun@1.4.3",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "vitest run tests/prompt-boundary.test.ts tests/config.test.ts tests/decision.test.ts tests/composition.test.ts && node node_modules/vitest/vitest.mjs run --config tests/reconnect/vitest.config.ts",
+    "test": "vitest run tests/prompt-boundary.test.ts tests/config.test.ts tests/decision.test.ts tests/composition.test.ts tests/history.test.ts tests/reflection.test.ts && node node_modules/vitest/vitest.mjs run --config tests/reconnect/vitest.config.ts",
     "test:reconnect": "node node_modules/vitest/vitest.mjs run --config tests/reconnect/vitest.config.ts",
     "typecheck": "tsc --noEmit",
     "test:native": "vitest run --config tests/native/vitest.config.ts",
