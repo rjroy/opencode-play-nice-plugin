@@ -13,6 +13,9 @@ export function fakeServices() {
   const held = new Map<string, ServerResponse>();
   const classificationCalls: string[] = [];
   let providerAttempts = 0;
+  let holdNextProvider = false;
+  let heldProvider: (() => void) | undefined;
+  const providerHeld = deferred<void>();
   const classified = (text: string) => {
     let entry = seen.get(text);
     if (!entry) { entry = deferred<void>(); seen.set(text, entry); }
@@ -49,27 +52,41 @@ export function fakeServices() {
       if (value.model !== "fixture-model" || !Array.isArray(value.messages)) {
         faults.push("invalid-provider-input"); response.writeHead(400).end(); return;
       }
-      const content = "fixture-model-ok";
-      if (value.stream === true) {
-        response.writeHead(200, { "content-type": "text/event-stream" });
-        const frame = (delta: object, finish: string | null) => response.write(`data: ${JSON.stringify({
-          id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixture-model",
-          choices: [{ index: 0, delta, finish_reason: finish }],
-          ...(finish ? { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } } : {}),
-        })}\n\n`);
-        frame({ content }, null); frame({}, "stop"); response.end("data: [DONE]\n\n");
-      } else {
-        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
-          id: "fixture", object: "chat.completion", created: 1, model: "fixture-model",
-          choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        }));
-      }
+      const streaming = value.stream === true;
+      const respond = () => {
+        const content = "fixture-model-ok";
+        if (streaming) {
+          response.writeHead(200, { "content-type": "text/event-stream" });
+          const frame = (delta: object, finish: string | null) => response.write(`data: ${JSON.stringify({
+            id: "fixture", object: "chat.completion.chunk", created: 1, model: "fixture-model",
+            choices: [{ index: 0, delta, finish_reason: finish }],
+            ...(finish ? { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } } : {}),
+          })}\n\n`);
+          frame({ content }, null); frame({}, "stop"); response.end("data: [DONE]\n\n");
+        } else {
+          response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+            id: "fixture", object: "chat.completion", created: 1, model: "fixture-model",
+            choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }));
+        }
+      };
+      if (holdNextProvider) {
+        holdNextProvider = false;
+        heldProvider = respond;
+        providerHeld.resolve();
+      } else respond();
     });
   });
   return {
     providerBodies, faults, classificationCalls, decision,
     get providerAttempts() { return providerAttempts; },
+    holdNextProvider() { holdNextProvider = true; },
+    providerHeld: () => providerHeld.promise,
+    releaseProvider() {
+      if (!heldProvider) throw new Error("no held provider response");
+      const respond = heldProvider; heldProvider = undefined; respond();
+    },
     seen: (text: string) => classified(text).promise,
     release(text: string) {
       const response = held.get(text);

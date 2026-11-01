@@ -116,6 +116,31 @@ criticism, frustration, profanity and quoted material are intended to be
 distinguished from personal attacks; model judgments can still be wrong.
 An allowed prompt follows OpenCode's normal provider/tool behavior.
 
+## Reflect on tone
+
+Use `/play-nice` to review recent selected evaluations in the current session,
+or add a question, such as `/play-nice Why might that sound dismissive?` The
+session agent explains the wording and can suggest alternatives that preserve
+your intent and boundaries. Scores are fallible; directness is not itself abuse.
+
+Play Nice stores the original wording, score, time, model and policy outcome for
+evaluated attempts with scores from **2 through 3**, inclusive. This includes
+rejected attempts. An allowed evaluation does not prove the message was admitted.
+History is stored locally per plugin location and limited to 200 records.
+Reflection uses at most the latest 10 records from the current session, plus
+recent available session context. Records older than 30 days are excluded and,
+along with excess records, pruned on the next history read or write. An inactive
+disk store may retain expired records until then.
+
+Use `/play-nice clear` to remove this session's records. Only the exact argument
+`clear` performs this action. When no records are available, or history cannot
+be accessed, Play Nice reports that instead of starting a reflection request.
+Clearing history does not erase OpenCode's own conversation history.
+
+The history store is local, but reflection uses the session's selected agent and
+provider, which may be remote. The selected records and recent context are sent
+to that provider when you request reflection.
+
 Scoring HTTP/transport failures, malformed responses and deadlines
 **allow the prompt** with an attempted “classification unavailable” notice.
 The overall classification/feedback budget is shared: the default composition

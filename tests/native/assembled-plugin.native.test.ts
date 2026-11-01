@@ -130,6 +130,106 @@ it("assembled default package reports all five scores, allows low scores by defa
   } finally { await fixture.close(); }
 });
 
+it("assembled play-nice command reflects recorded turns with optional question without rescoring", async () => {
+  const fixture = await nativeFixture("assembled-default");
+  try {
+    const ui = await headless(fixture);
+    const target = await session(fixture);
+    const text = "reflection-evidence-please-fix-this-now";
+    await finish(fixture, ui, start(fixture, ui, target.id, text, { kind: "score", score: 2.5 }), 2.5, "allowed");
+
+    // Reload the owned native location rather than reconstructing plugin state
+    // in the test; the subsequent task must use the persisted evaluation.
+    await fixture.client.location.reload(fixture.options());
+    const reloadDeadline = Date.now() + 5000;
+    let reloaded = false;
+    while (Date.now() < reloadDeadline) {
+      const plugins = await fixture.client.plugin.list({ location: fixture.location }, fixture.options());
+      if (plugins.data.some(plugin => plugin.id === "play-nice" && plugin.state.status === "active")) { reloaded = true; break; }
+      await pause(30);
+    }
+    expect(reloaded, "owned location must reactivate the plugin after reload").toBe(true);
+    const commands = await fixture.client.command.list({ location: fixture.location }, fixture.options());
+    expect(commands.data.map(command => command.name), "Missing native play-nice command registration").toContain("play-nice");
+
+    const other = await session(fixture);
+    const providerBeforeEmpty = fixture.services.providerAttempts;
+    const decisionsBeforeEmpty = fixture.services.decision.requests.length;
+    const toastBeforeEmpty = ui.toasts.length;
+    await fixture.client.session.command({ sessionID: other.id, name: "play-nice", text: "" }, fixture.options());
+    expect(ui.toasts.slice(toastBeforeEmpty).some(toast => toast.sessionID === other.id && /no .*history/i.test(toast.message))).toBe(true);
+    expect(fixture.services.providerAttempts).toBe(providerBeforeEmpty);
+    expect(fixture.services.decision.requests).toHaveLength(decisionsBeforeEmpty);
+
+    const question = "Why might that wording sound dismissive?";
+    for (const argument of ["", question]) {
+      const before = new Set((await messages(fixture, target.id)).map(message => message.id));
+      const decisions = fixture.services.decision.requests.length;
+      const provider = fixture.services.providerAttempts;
+      await fixture.client.session.command({ sessionID: target.id, name: "play-nice", text: argument }, fixture.options());
+
+      const deadline = Date.now() + 12000;
+      let generated: Awaited<ReturnType<typeof messages>>[number] | undefined;
+      while (Date.now() < deadline) {
+        generated = (await messages(fixture, target.id)).find(message => message.type === "user" && !before.has(message.id));
+        if (generated?.type === "user" && fixture.services.providerAttempts > provider) break;
+        await pause(30);
+      }
+      expect(generated?.type, "command must submit a reflection prompt to the session agent").toBe("user");
+      if (!generated || generated.type !== "user") throw new Error("Missing generated reflection prompt");
+      expect(generated.text).toContain(text);
+      expect(generated.text).toContain("2.5");
+      if (argument) expect(generated.text).toContain(argument);
+      await completed(fixture, target.id, generated.id, generated.text);
+      expect(fixture.services.providerAttempts).toBeGreaterThan(provider);
+      expect(fixture.services.providerBodies.slice(provider).some(body => body.includes("reflection-evidence-please-fix-this-now") && body.includes("2.5"))).toBe(true);
+      if (argument) expect(fixture.services.providerBodies.slice(provider).some(body => body.includes(argument))).toBe(true);
+      expect(fixture.services.decision.requests, "generated reflection must not be classified").toHaveLength(decisions);
+    }
+
+    const ordinary = "reflection-followup-ordinary-prompt";
+    await finish(fixture, ui, start(fixture, ui, target.id, ordinary, { kind: "score", score: 4 }), 4, "allowed");
+    expect(fixture.services.decision.requests.map(request => request.state)).toEqual([text, ordinary]);
+    expect(fixture.services.faults).toEqual([]);
+    await fixture.recordReceipt({ status: "passed", commandDiscovered: true, locationReload: true, sessionIsolation: true, bareAndFocusedReflection: true, generatedPromptNotScored: true, ordinaryPromptScored: true });
+  } finally { await fixture.close(); }
+});
+
+it("assembled queued reflection waits for an active provider turn without Decision rescore", async () => {
+  const fixture = await nativeFixture("assembled-default");
+  try {
+    const ui = await headless(fixture);
+    const target = await session(fixture);
+    const evidence = "queued-reflection-seed";
+    await finish(fixture, ui, start(fixture, ui, target.id, evidence, { kind: "score", score: 2.5 }), 2.5, "allowed");
+    fixture.services.holdNextProvider();
+    const turn = start(fixture, ui, target.id, "queued-active-turn", { kind: "score", score: 4 });
+    await bounded(fixture.services.providerHeld(), "active provider response held");
+    const attempts = fixture.services.providerAttempts;
+    const decisions = fixture.services.decision.requests.length;
+    await fixture.client.session.command({ sessionID: target.id, name: "play-nice", text: "queued question", delivery: "queue" }, fixture.options());
+    const queued = (await fixture.client.session.inbox.list({ sessionID: target.id }, fixture.options()))
+      .find(item => item.type === "user" && item.payload.text.includes("queued question"));
+    expect(queued?.type, "reflection must be admitted to the native inbox while provider is held").toBe("user");
+    if (!queued || queued.type !== "user") throw new Error("Missing queued reflection");
+    expect(queued.delivery).toBe("queue");
+    expect(queued.payload.text).toContain(evidence);
+    expect(queued.payload.text).toContain("2.5");
+    expect(fixture.services.providerAttempts).toBe(attempts);
+    expect(fixture.services.decision.requests).toHaveLength(decisions);
+    fixture.services.releaseProvider();
+    await finish(fixture, ui, turn, 4, "allowed");
+    await completed(fixture, target.id, queued.id, queued.payload.text);
+    expect(fixture.services.providerAttempts).toBeGreaterThan(attempts);
+    expect(fixture.services.providerBodies.slice(attempts).some(body => body.includes("queued question") && body.includes(evidence))).toBe(true);
+    expect(fixture.services.decision.requests).toHaveLength(decisions);
+    await finish(fixture, ui, start(fixture, ui, target.id, "queued-followup-ordinary", { kind: "score", score: 4 }), 4, "allowed");
+    expect(fixture.services.decision.requests.map(request => request.state)).toEqual([evidence, "queued-active-turn", "queued-followup-ordinary"]);
+    expect(fixture.services.faults).toEqual([]);
+    await fixture.recordReceipt({ status: "passed", queuedReflection: true, generatedPromptNotScored: true, ordinaryPromptScored: true });
+  } finally { await fixture.close(); }
+});
+
 it("assembled opt-in blocks rude and abusive after toast receipt, then accepts an edited submission and an idempotent retry", async () => {
   const fixture = await nativeFixture("assembled-reject");
   try {

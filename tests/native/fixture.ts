@@ -53,7 +53,7 @@ async function stopChild(child: ChildProcessWithoutNullStreams) {
 async function copyPlugin(root: string, profile: FixtureProfile) {
   const plugin = join(root, "plugin");
   await mkdir(join(plugin, "src"), { recursive: true, mode: 0o700 });
-  for (const name of ["server", "tui", "rpc", "prompt-boundary", "config", "decision", "tone"]) {
+  for (const name of ["server", "tui", "rpc", "prompt-boundary", "config", "decision", "tone", "history"]) {
     await copyFile(fileURLToPath(new URL(`../../src/${name}.ts`, import.meta.url)), join(plugin, `src/${name}.ts`));
   }
   const manifestPath = fileURLToPath(new URL("../../package.json", import.meta.url));

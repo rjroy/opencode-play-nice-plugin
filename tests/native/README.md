@@ -26,7 +26,7 @@ OPENCODE_TEST_BINARY=/home/rjroy/.local/share/mise/installs/npm-opencode-cli/2.2
 ```
 
 `assembled-plugin.native.test.ts` copies the actual root manifest unchanged
-and all seven production modules. Native resolves the production default
+and the production modules. Native resolves the production default
 `./server`, never the fixed-classification wrapper. The headless handler imports
 the actual package `./tui` export; native inventory must expose server/TUI/RPC
 features. This is package/API evidence, not a rendered native TUI host.
