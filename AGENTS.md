@@ -1,51 +1,61 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
+## Start here
 
-> **Architecture in one line:** Issues live in a local Dolt database
-> (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
-> git-compatible protocol), stored under `refs/dolt/data` on your git
-> remote — separate from `refs/heads/*` where your code lives.
-> `.beads/issues.jsonl` is a passive export, not the wire protocol.
->
-> See [SYNC_CONCEPTS.md](https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md)
-> for the one-screen overview and anti-patterns (don't treat JSONL as the
-> source of truth; don't `bd import` during normal operation; don't
-> reach for third-party Dolt hosting before trying the default).
+Play Nice is a private, unreleased OpenCode 2.2.2 V2 plugin. It scores the
+current user message with a Decision API, can reject it before admission, and
+offers on-demand reflection on selected evaluations. It does not install or
+start the Decision service. OpenCode V1 plugin APIs are not compatible.
 
-## Quick Reference
+Read [README.md](README.md) for setup, behavior, configuration and privacy;
+[CONTRIBUTING.md](CONTRIBUTING.md) for development checks; and
+[tests/native/README.md](tests/native/README.md) before native integration work.
+`package.json` and `bun.lock` pin the runtime dependencies and toolchain.
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
-```
+## Code map and behavior
 
-## Non-Interactive Shell Commands
+- `src/server.ts`: native prompt hook, classification policy, feedback,
+  reflection command and lifecycle.
+- `src/decision.ts`: current-message Score request and response validation;
+  `src/tone.ts`: score criteria and labels; `src/config.ts`: option validation.
+- `src/prompt-boundary.ts`: pre-admission allow/reject and feedback sequencing.
+- `src/tui.ts` and `src/rpc.ts`: TUI feedback, receipt handling and RPC contract.
+- `src/history.ts`: local, bounded per-message reflection records.
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
+Scoring and rejection are separate: rejection is opt-in and uses the unrounded
+score. A session identified as a child skips the hook's scoring and rejection;
+if session lookup fails or times out, normal policy still applies. Classification
+sends only the current message text, not conversation history, to Decision.
+Reflection stores selected evaluations locally and sends them with available
+context to the current session's agent and provider, which may be remote. An
+allowed policy outcome is not proof of durable admission.
 
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
+## Build and verification
 
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
+The root package exports TypeScript source. The build replaces `dist/` and creates
+a separate compiled package with `server`, `tui` and `rpc` exports. Do not assume
+building changes the root exports or that `dist` is a standalone distribution.
+The native assembled fixture copies source modules using explicit lists; update
+those lists when adding a production module needed by the fixture.
 
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
+Choose checks for the change using [CONTRIBUTING.md](CONTRIBUTING.md). The native
+suite is explicit opt-in and has strict prerequisites; do not change host config
+to pass preflight. Its assembled source-package fixture and headless TUI do not
+prove compiled-package native execution or visible toast rendering. Package
+host-load checks do not establish native behavior. Report what was actually run.
 
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+## Workflow boundaries
+
+Use `bd` for tracking and run `bd prime` for current workflow context. The local
+Dolt database is the issue source of truth; `.beads/issues.jsonl` is a passive
+export, not the sync protocol. Managed Beads guidance below is subordinate to
+active higher-priority instructions. In particular, honor any applicable Beads
+sequence checkpoint authority and any explicit prohibition on commits or sync;
+do not infer permission to push or sync remotely.
+
+Keep shell operations non-interactive. Check targets before destructive or broad
+operations, and do not use force or recursive deletion merely to avoid a prompt.
+Follow the active environment's directory and privilege restrictions.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
