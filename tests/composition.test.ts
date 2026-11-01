@@ -4,7 +4,12 @@ import type { SessionPrompt } from "@opencode/plugin/promise/session";
 import server from "../src/server.js";
 import type { FeedbackEvent } from "../src/rpc.js";
 
-const scores = [0, 1, 1.49, 1.5, 2, 3, 4] as const;
+const scores = [
+  [0, "abusive"], [0.49, "abusive"], [0.5, "rude"],
+  [1, "rude"], [1.49, "rude"], [1.5, "frustrated"],
+  [2, "frustrated"], [2.49, "frustrated"], [2.5, "neutral"],
+  [3, "neutral"], [3.49, "neutral"], [3.5, "kind"], [4, "kind"],
+] as const;
 const privateText = "fixture-private-message";
 const privateError = "fixture-private-upstream-error";
 
@@ -135,23 +140,26 @@ describe("default server policy composition", () => {
     } finally { if (!closed) await fixture.close(); }
   });
 
-  it.each(scores)("reports score %s while allowing by default", async score => {
+  it.each(scores)("reports score %s and rubric identifier %s while allowing by default", async (score, identifier) => {
     const fixture = await harness({}, fetchTone(score));
     try {
       await expect(fixture.submit()).resolves.toBeUndefined();
       expect(fixture.feedback).toHaveLength(1);
       expect(fixture.feedback[0]?.message).toContain(String(score));
+      expect(fixture.feedback[0]?.message).toMatch(new RegExp(`\\b${identifier}\\b`, "i"));
       expect(fixture.feedback[0]?.outcome).toBe("allowed");
     } finally { await fixture.close(); }
   });
 
-  it.each([[0, "blocked"], [1, "blocked"], [1.49, "blocked"], [1.5, "allowed"], [1.51, "allowed"], [4, "allowed"]] as const)(
-    "enforces the default cutoff for score %s", async (score, outcome) => {
+  it.each([[0, "blocked", "abusive"], [1, "blocked", "rude"], [1.49, "blocked", "rude"], [1.5, "allowed", "frustrated"], [1.51, "allowed", "frustrated"], [4, "allowed", "kind"]] as const)(
+    "enforces the default cutoff for score %s", async (score, outcome, identifier) => {
       const fixture = await harness({ autoReject: true }, fetchTone(score));
       try {
         const result = await fixture.submit().then(() => "allowed", () => "blocked");
         expect(result).toBe(outcome);
         expect(fixture.feedback[0]?.outcome).toBe(outcome);
+        expect(fixture.feedback[0]?.message).toContain(String(score));
+        expect(fixture.feedback[0]?.message).toMatch(new RegExp(`\\b${identifier}\\b`, "i"));
       } finally { await fixture.close(); }
     },
   );
@@ -178,6 +186,8 @@ describe("default server policy composition", () => {
       try {
         expect(await fixture.submit().then(() => "allowed", () => "blocked")).toBe(outcome);
         expect(fixture.feedback[0]?.outcome).toBe(outcome);
+        expect(fixture.feedback[0]?.message).toContain(String(score));
+        expect(fixture.feedback[0]?.message).toMatch(/\bfrustrated\b/i);
       } finally { await fixture.close(); }
     },
   );

@@ -7,4 +7,11 @@ export const toneCriteria: readonly string[] = Object.freeze([
   "Kind: friendly, appreciative, considerate, or supportive communication.",
 ]);
 
+/** Scores have already been validated; each criterion starts with its identifier. */
+export function toneIdentifier(score: number): string {
+  const criterion = toneCriteria[Math.round(score)];
+  if (criterion === undefined) throw new RangeError("Invalid tone score");
+  return criterion.slice(0, criterion.indexOf(":")).toLowerCase();
+}
+
 export const toneInstructions = "Rate the tone of the current user message, not the user's character. Distinguish the user's own attitude from words merely quoted or discussed; profanity alone does not imply a personal attack.";

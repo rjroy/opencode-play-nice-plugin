@@ -5,6 +5,7 @@ import { readSettings } from "./config.js";
 import { classifyTone } from "./decision.js";
 import { checkPrompt } from "./prompt-boundary.js";
 import { feedbackRpc, readFeedbackReceipt, type FeedbackEvent } from "./rpc.js";
+import { toneIdentifier } from "./tone.js";
 
 /** Dependency boundary for native integration; not a configurable fixed policy. */
 export interface NativeBoundaryDependencies {
@@ -243,9 +244,10 @@ export default {
           return { outcome: "allowed", message: "Tone classification unavailable." };
         }
         const blocked = settings.autoReject && result.score < settings.rejectBelowScore;
+        const scoreFeedback = `Tone score: ${result.score}/4 (${toneIdentifier(result.score)}; higher is kinder).`;
         return {
           outcome: blocked ? "blocked" : "allowed",
-          message: blocked ? `Tone score: ${result.score}/4 (higher is kinder). Prompt rejected; edit and resubmit.` : `Tone score: ${result.score}/4 (higher is kinder).`,
+          message: blocked ? `${scoreFeedback} Prompt rejected; edit and resubmit.` : scoreFeedback,
         };
       },
     });
