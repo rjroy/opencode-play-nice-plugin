@@ -3,14 +3,13 @@ import type { Plugin } from "@opencode/plugin";
 import type { SessionPrompt } from "@opencode/plugin/promise/session";
 import server from "../src/server.js";
 import type { FeedbackEvent } from "../src/rpc.js";
-import type { Tone } from "../src/tone.js";
 
-const tones: readonly Tone[] = ["kind", "neutral", "frustrated", "rude", "abusive"];
+const scores = [0, 1, 1.49, 1.5, 2, 3, 4] as const;
 const privateText = "fixture-private-message";
 const privateError = "fixture-private-upstream-error";
 
-function fetchTone(tone: Tone): typeof fetch {
-  return async () => new Response(JSON.stringify({ answers: { tone: { type: "choice", choice: tone } } }), { status: 200 });
+function fetchTone(score: number): typeof fetch {
+  return async () => new Response(JSON.stringify({ answers: { tone: { type: "score", score } } }), { status: 200 });
 }
 
 async function harness(
@@ -55,7 +54,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(
 
 describe("default server policy composition", () => {
   it("bypasses both classification and feedback for a child session", async () => {
-    const fetch = vi.fn(fetchTone("rude"));
+    const fetch = vi.fn(fetchTone(1));
     const getSession = vi.fn(async (_input: { sessionID: string }) => ({ parentID: "ses_parent" }));
     const fixture = await harness({ autoReject: true }, fetch, true, getSession);
     try {
@@ -67,7 +66,7 @@ describe("default server policy composition", () => {
   });
 
   it("still classifies and rejects a top-level session with feedback", async () => {
-    const fetch = vi.fn(fetchTone("rude"));
+    const fetch = vi.fn(fetchTone(1));
     const getSession = vi.fn(async (_input: { sessionID: string }) => ({}));
     const fixture = await harness({ autoReject: true }, fetch, true, getSession);
     try {
@@ -80,7 +79,7 @@ describe("default server policy composition", () => {
   });
 
   it("retains classification and rejection feedback if session lookup fails", async () => {
-    const fetch = vi.fn(fetchTone("rude"));
+    const fetch = vi.fn(fetchTone(1));
     const getSession = vi.fn(async (_input: { sessionID: string }): Promise<{ parentID?: string }> => {
       throw new Error("fixture lookup failure");
     });
@@ -101,7 +100,7 @@ describe("default server policy composition", () => {
     const getSession = vi.fn((_input: { sessionID: string }) => new Promise<{ parentID?: string }>(resolve => {
       resolveLookup = resolve;
     }));
-    const fetch = vi.fn(fetchTone("rude"));
+    const fetch = vi.fn(fetchTone(1));
     const fixture = await harness({ autoReject: true, timeoutMs: 1000 }, fetch, true, getSession);
     try {
       const pending = fixture.submit().then(() => "allowed", () => "rejected");
@@ -121,7 +120,7 @@ describe("default server policy composition", () => {
   });
 
   it("cancels a pending session lookup when the plugin closes", async () => {
-    const fetch = vi.fn(fetchTone("rude"));
+    const fetch = vi.fn(fetchTone(1));
     const getSession = vi.fn((_input: { sessionID: string }): Promise<{ parentID?: string }> => new Promise(() => {}));
     const fixture = await harness({ autoReject: true }, fetch, true, getSession);
     const pending = fixture.submit().then(() => "allowed", () => "rejected");
@@ -136,23 +135,34 @@ describe("default server policy composition", () => {
     } finally { if (!closed) await fixture.close(); }
   });
 
-  it.each(tones)("reports %s while allowing by default", async tone => {
-    const fixture = await harness({}, fetchTone(tone));
+  it.each(scores)("reports score %s while allowing by default", async score => {
+    const fixture = await harness({}, fetchTone(score));
     try {
       await expect(fixture.submit()).resolves.toBeUndefined();
       expect(fixture.feedback).toHaveLength(1);
-      expect(fixture.feedback[0]?.message.toLowerCase()).toContain(tone);
+      expect(fixture.feedback[0]?.message).toContain(String(score));
       expect(fixture.feedback[0]?.outcome).toBe("allowed");
     } finally { await fixture.close(); }
   });
 
-  it("awaits rejection feedback receipt before rejecting an opted-in category", async () => {
-    const fixture = await harness({ autoReject: true }, fetchTone("rude"), false);
+  it.each([[0, "blocked"], [1, "blocked"], [1.49, "blocked"], [1.5, "allowed"], [1.51, "allowed"], [4, "allowed"]] as const)(
+    "enforces the default cutoff for score %s", async (score, outcome) => {
+      const fixture = await harness({ autoReject: true }, fetchTone(score));
+      try {
+        const result = await fixture.submit().then(() => "allowed", () => "blocked");
+        expect(result).toBe(outcome);
+        expect(fixture.feedback[0]?.outcome).toBe(outcome);
+      } finally { await fixture.close(); }
+    },
+  );
+
+  it("awaits rejection feedback receipt before rejecting an opted-in score", async () => {
+    const fixture = await harness({ autoReject: true }, fetchTone(1), false);
     try {
       let settled = false;
       const pending = fixture.submit().then(() => { settled = true; return "allowed"; }, () => { settled = true; return "rejected"; });
       await vi.waitFor(() => expect(fixture.feedback).toHaveLength(1));
-      expect(fixture.feedback[0]?.message.toLowerCase()).toContain("rude");
+      expect(fixture.feedback[0]?.message).toContain("1");
       expect(fixture.feedback[0]?.outcome).toBe("blocked");
       expect(settled).toBe(false);
       const event = fixture.feedback[0];
@@ -162,14 +172,15 @@ describe("default server policy composition", () => {
     } finally { await fixture.close(); }
   });
 
-  it("uses configured categories instead of blocking every negative tone", async () => {
-    const fixture = await harness({ autoReject: true, rejectedCategories: ["kind"] }, fetchTone("rude"));
-    try {
-      await expect(fixture.submit()).resolves.toBeUndefined();
-      expect(fixture.feedback[0]?.outcome).toBe("allowed");
-      expect(fixture.feedback[0]?.message.toLowerCase()).toContain("rude");
-    } finally { await fixture.close(); }
-  });
+  it.each([[2.24, "blocked"], [2.25, "allowed"], [2.26, "allowed"]] as const)(
+    "uses configured fractional cutoff for score %s", async (score, outcome) => {
+      const fixture = await harness({ autoReject: true, rejectBelowScore: 2.25 }, fetchTone(score));
+      try {
+        expect(await fixture.submit().then(() => "allowed", () => "blocked")).toBe(outcome);
+        expect(fixture.feedback[0]?.outcome).toBe(outcome);
+      } finally { await fixture.close(); }
+    },
+  );
 
   it("passes context options and the current prompt to the Decision client", async () => {
     let url: string | undefined;
@@ -177,7 +188,7 @@ describe("default server policy composition", () => {
     const fetch: typeof globalThis.fetch = async (input, init) => {
       url = String(input);
       body = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify({ answers: { tone: { type: "choice", choice: "neutral" } } }));
+      return new Response(JSON.stringify({ answers: { tone: { type: "score", score: 3 } } }));
     };
     const fixture = await harness({ endpoint: "http://fixture.test/decision", model: "fixture-model" }, fetch);
     try {
@@ -197,12 +208,22 @@ describe("default server policy composition", () => {
       expect(logs).not.toContain(privateText);
       expect(logs).not.toContain(privateError);
       expect(logs).not.toContain("secret-path");
-      expect(logs).toMatch(/classification/i);
+      expect(logs).toMatch(/classif|scor/i);
+    } finally { await fixture.close(); }
+  });
+
+  it.each(["1.2", -0.01, 4.01, null])("fails open on an invalid score %#", async score => {
+    const fetch: typeof globalThis.fetch = async () => new Response(JSON.stringify({ answers: { tone: { type: "score", score } } }));
+    const fixture = await harness({ autoReject: true }, fetch);
+    try {
+      await expect(fixture.submit()).resolves.toBeUndefined();
+      expect(fixture.feedback[0]?.outcome).toBe("allowed");
+      expect(fixture.feedback[0]?.message.toLowerCase()).toContain("unavailable");
     } finally { await fixture.close(); }
   });
 
   it("still rejects when the rejection toast fails and does not call that a classifier failure", async () => {
-    const fixture = await harness({ autoReject: true }, fetchTone("abusive"), false);
+    const fixture = await harness({ autoReject: true }, fetchTone(0), false);
     try {
       const pending = fixture.submit();
       const settled = pending.then(() => "allowed", () => "rejected");
@@ -240,7 +261,7 @@ describe("default server policy composition", () => {
   it("rejects by the shared deadline if no rejection receipt arrives and ignores a late receipt", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10000);
-    const fixture = await harness({ autoReject: true, timeoutMs: 1000 }, fetchTone("rude"), false);
+    const fixture = await harness({ autoReject: true, timeoutMs: 1000 }, fetchTone(1), false);
     try {
       const pending = fixture.submit().then(() => "allowed", () => "rejected");
       await vi.advanceTimersByTimeAsync(1000);

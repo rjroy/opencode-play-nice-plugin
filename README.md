@@ -1,8 +1,8 @@
 # Play Nice for OpenCode 2.2.2
 
-A private, local V2 plugin that classifies the **current user message** as
-`kind`, `neutral`, `frustrated`, `rude`, or `abusive`, reports the judgment, and
-optionally rejects selected categories before native prompt admission.
+A private, local V2 plugin that scores the tone of the **current user message**,
+reports the score, and optionally rejects scores below a configured threshold
+before native prompt admission.
 It judges message tone, not a person's character.
 
 **Status:** the production server/client/policy and TUI receipt handler are
@@ -40,7 +40,8 @@ Replace the example absolute directory with the actual checkout directory:
       "options": {
         "endpoint": "http://localhost:11434/v1/systemone",
         "model": "d3",
-        "autoReject": false
+        "autoReject": false,
+        "rejectBelowScore": 1.5
       }
     }
   ]
@@ -75,14 +76,15 @@ this project does not install Ollama, download `d3`, or start a personal service
 | Option | Default | Accepted values |
 |---|---|---|
 | `autoReject` | `false` | Boolean; rejection is opt-in |
-| `rejectedCategories` | `["rude", "abusive"]` | Array of the five labels; replaces, not extends, the default set; `[]` rejects none |
+| `rejectBelowScore` | `1.5` | Finite number from **0** to **4**; scores strictly below it are rejected when `autoReject` is enabled |
 | `endpoint` | `http://localhost:11434/v1/systemone` | HTTP/HTTPS URL without embedded username/password |
 | `model` | `d3` | Non-empty model string |
 | `timeoutMs` | `5000` | Integer from **1000** to **30000** milliseconds |
 
-Unknown settings, unknown category names, wrong types and invalid endpoints
-cause plugin setup to fail rather than being silently ignored. Taxonomy and
-classification instructions are fixed; arbitrary classification prompts and
+Unknown settings, wrong types and invalid endpoints cause plugin setup to fail
+rather than being silently ignored. The removed `rejectedCategories` option
+must be replaced with `rejectBelowScore`; there is no exact category-to-score
+conversion. The rubric and scoring instructions are fixed; arbitrary prompts and
 confidence thresholds are not settings.
 
 Enable rejection explicitly, for example:
@@ -93,19 +95,27 @@ Enable rejection explicitly, for example:
     "package": "/absolute/path/to/opencode-play-nice-plugin/dist",
     "options": {
       "autoReject": true,
-      "rejectedCategories": ["rude", "abusive"],
+      "rejectBelowScore": 1.5,
       "timeoutMs": 5000
     }
   }]
 }
 ```
 
-All five judgments are reported, including when rejection is disabled. Blunt
+The ordered rubric is **0 abusive, 1 rude, 2 frustrated, 3 neutral, 4 kind**:
+higher is kinder. The score is a probability-weighted position and may be
+fractional, not a category or confidence. Confidence describes the distribution
+separately; this plugin does not gate on confidence. The raw score is reported
+and compared without rounding, including when rejection is disabled. With the
+default cutoff, 1.49 is rejected and 1.5 is allowed when `autoReject` is true;
+equality is always allowed. A cutoff of 0 rejects no valid scores.
+
+Blunt
 criticism, frustration, profanity and quoted material are intended to be
 distinguished from personal attacks; model judgments can still be wrong.
 An allowed prompt follows OpenCode's normal provider/tool behavior.
 
-Classification HTTP/transport failures, malformed responses and deadlines
+Scoring HTTP/transport failures, malformed responses and deadlines
 **allow the prompt** with an attempted “classification unavailable” notice.
 The overall classification/feedback budget is shared: the default composition
 reserves roughly one fifth for feedback instead of letting classification use
@@ -153,12 +163,14 @@ that plugin logging promise. Test request bodies exist only as test-owned
 fixture observations; retained native receipts contain no prompt bodies.
 
 The existing [14-call local qualitative evaluation](.lore/work/research/local-d3-tone-evaluation.md)
-is unchanged. It found a notable quoted/task-data false positive: an insult
+evaluated the former Choice contract, not the current Score contract; it does
+not validate Score behavior or its threshold. It found a quoted/task-data false positive: an insult
 presented for classification was labeled `rude`, despite the intended quote
 distinction. A severe personal insult also fell on the rude/abusive boundary.
 That small sample is not an accuracy estimate or a calibrated confidence
-guarantee. Automatic rejection stays opt-in; review judgment mistakes rather
-than assuming every quoted phrase will be classified correctly.
+guarantee. Evaluate Score judgments and thresholds on representative data.
+Automatic rejection stays opt-in; review judgment mistakes rather than assuming
+every quoted phrase will be scored correctly.
 
 ## Validation
 
@@ -190,7 +202,8 @@ artifacts or run the compiler implicitly. See [Packaging](#packaging).
 
 The assembled integration uses an actual OpenCode 2.2.2 process, the real
 default server package and production headless TUI handler, a fake Decision
-API with scripted `choice` answers, and a fake chat provider. It does not use a
+API and a fake chat provider. Its previous Choice-based evidence does not
+validate the current Score contract. It does not use a
 live Ollama/Decision service or paid provider. An explicitly selected trusted
 Linux x64 installation is required; no PATH fallback or auto-install is used:
 
@@ -214,7 +227,7 @@ the retained boundary/failure cases and full explicit `test:native` command.
   successful build. Source exports require the native Bun-capable loader, not
   plain Node executing `.ts` as compiled JS.
 - **Classification unavailable:** check the configured service/model and its
-  `answers.tone.type: "choice"` / valid `choice` response, HTTP outcome and
+  `answers.tone.type: "score"` / finite `score` from 0 through 4, HTTP outcome and
   timeout. Do not dump private messages or response bodies into diagnostics.
 - **Rejected with a generic error:** this is the pinned native throw mapping;
   it can obscure the reason toast. Edit/resubmit, or deliberately disable

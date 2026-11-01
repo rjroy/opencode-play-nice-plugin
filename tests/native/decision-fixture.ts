@@ -1,9 +1,8 @@
 import type { ServerResponse } from "node:http";
 import { deferred, record } from "./support.js";
 
-/** Test-owned labels and replies: never ask a live model to choose test results. */
-export type FixtureTone = "kind" | "neutral" | "frustrated" | "rude" | "abusive";
-export type DecisionReply = { kind: "choice"; tone: FixtureTone } | { kind: "http-error" } | { kind: "malformed" } | { kind: "timeout" };
+/** Test-owned replies: never ask a live model to choose test results. */
+export type DecisionReply = { kind: "score"; score: number } | { kind: "http-error" } | { kind: "malformed" } | { kind: "timeout" };
 
 export function decisionFixture(faults: string[]) {
   const requests: Record<string, unknown>[] = [];
@@ -19,9 +18,9 @@ export function decisionFixture(faults: string[]) {
   const respond = (response: ServerResponse, reply: DecisionReply) => {
     if (reply.kind === "timeout") return; // Native must cancel its own HTTP operation.
     response.writeHead(reply.kind === "http-error" ? 503 : 200, { "content-type": "application/json" });
-    response.end(JSON.stringify(reply.kind === "choice" ? { answers: { tone: { type: "choice", choice: reply.tone } } }
+    response.end(JSON.stringify(reply.kind === "score" ? { answers: { tone: { type: "score", score: reply.score } } }
       : reply.kind === "http-error" ? { error: "owned Decision HTTP failure" }
-      : { answers: { tone: { type: "choice", choice: "not-a-tone" } } }));
+      : { answers: { tone: { type: "score", score: "not-a-number" } } }));
   };
   return {
     requests, aborted,
