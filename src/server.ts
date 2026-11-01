@@ -242,10 +242,10 @@ export default {
           log("decision-unavailable", { reason: result.reason });
           return { outcome: "allowed", message: "Tone classification unavailable." };
         }
-        const blocked = settings.autoReject && settings.rejectedCategories.includes(result.tone);
+        const blocked = settings.autoReject && result.score < settings.rejectBelowScore;
         return {
           outcome: blocked ? "blocked" : "allowed",
-          message: blocked ? `Tone: ${result.tone}. Prompt rejected; edit and resubmit.` : `Tone: ${result.tone}.`,
+          message: blocked ? `Tone score: ${result.score}/4 (higher is kinder). Prompt rejected; edit and resubmit.` : `Tone score: ${result.score}/4 (higher is kinder).`,
         };
       },
     });

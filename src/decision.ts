@@ -1,7 +1,7 @@
-import { isTone, toneCriteria, toneInstructions, type Tone } from "./tone.js";
+import { toneCriteria, toneInstructions } from "./tone.js";
 
 export type ClassificationResult =
-  | { status: "classified"; tone: Tone }
+  | { status: "scored"; score: number }
   | { status: "unavailable"; reason: "http" | "transport" | "timeout" | "cancelled" | "invalid-response" };
 
 export interface ClassificationRequest {
@@ -26,13 +26,14 @@ function parseAnswer(value: unknown): ClassificationResult {
     return { status: "unavailable", reason: "invalid-response" };
   }
   const answer = value.answers.tone;
-  if ("error" in answer || answer.type !== "choice" || !isTone(answer.choice)) {
+  if ("error" in answer || answer.type !== "score" || typeof answer.score !== "number" ||
+      !Number.isFinite(answer.score) || answer.score < 0 || answer.score > 4) {
     return { status: "unavailable", reason: "invalid-response" };
   }
-  return { status: "classified", tone: answer.choice };
+  return { status: "scored", score: answer.score };
 }
 
-/** Classify only this message, bounded by the caller's absolute deadline. */
+/** Score only this message, bounded by the caller's absolute deadline. */
 export async function classifyTone(
   request: ClassificationRequest,
   dependencies: ClassificationDependencies,
@@ -62,7 +63,7 @@ export async function classifyTone(
         body: JSON.stringify({
           model: request.model ?? "d3",
           state: request.text,
-          questions: { tone: { type: "choice", instructions: toneInstructions, criteria: toneCriteria } },
+          questions: { tone: { type: "score", instructions: toneInstructions, criteria: toneCriteria } },
         }),
         signal: controller.signal,
       });

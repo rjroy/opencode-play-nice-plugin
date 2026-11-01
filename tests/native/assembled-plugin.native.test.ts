@@ -4,13 +4,14 @@ import { expect, it } from "vitest";
 // Resolve the ACTUAL package export, not the boundary fixture adapter.
 import productionTui from "opencode-play-nice-plugin/tui";
 import { nativeFixture, type NativeFixture } from "./fixture.js";
-import type { DecisionReply, FixtureTone } from "./decision-fixture.js";
+import type { DecisionReply } from "./decision-fixture.js";
 import { nativeReceiptGate, recordingTuiContext, type RecordedToast } from "./production-tui.js";
 import { rpcReceiptClient } from "./rpc-receipt-client.js";
 import { completed, identity, messages, noAdmission, prompt, session } from "./session.js";
 import { bounded, pause, record } from "./support.js";
 
-const labels: readonly FixtureTone[] = ["kind", "neutral", "frustrated", "rude", "abusive"];
+const scores = [0, 1, 2, 3, 4] as const;
+const levels = [/abus|threat|harass/i, /rude|disrespect|insult/i, /frustrat|dissatisf/i, /neutral|matter.of.fact/i, /kind|friendly|support|appreciat/i] as const;
 
 async function headless(fixture: NativeFixture, heldReceipt = false, failedToast = false) {
   const order: string[] = [];
@@ -59,26 +60,32 @@ function currentMessageRequest(fixture: NativeFixture, text: string) {
   const matching = fixture.services.decision.requests.filter(request => request.state === text);
   expect(matching).toHaveLength(1);
   const request = matching[0];
-  if (!request || !record(request.questions) || !record(request.questions.tone)) throw new Error("Missing owned choice request");
+  if (!request || !record(request.questions) || !record(request.questions.tone)) throw new Error("Missing owned score request");
   expect(Object.keys(request).sort()).toEqual(["model", "questions", "state"]);
   expect(request.model).toBe("d3"); // Default model, but ONLY sent to the fake endpoint.
   expect(request.state).toBe(text);
   expect(Object.keys(request.questions)).toEqual(["tone"]);
-  expect(request.questions.tone.type).toBe("choice");
+  expect(request.questions.tone.type).toBe("score");
   expect(typeof request.questions.tone.instructions).toBe("string");
   expect(String(request.questions.tone.instructions).length).toBeGreaterThan(0);
-  if (!record(request.questions.tone.criteria)) throw new Error("Missing choice criteria");
-  expect(Object.keys(request.questions.tone.criteria).sort()).toEqual([...labels].sort());
-  expect(Object.values(request.questions.tone.criteria).every(value => typeof value === "string" && value.length > 0)).toBe(true);
+  expect(request.questions.tone).not.toHaveProperty("levels");
+  const criteria = request.questions.tone.criteria;
+  expect(Array.isArray(criteria)).toBe(true);
+  if (!Array.isArray(criteria)) throw new Error("Missing score criteria");
+  expect(criteria).toHaveLength(5);
+  for (const [index, level] of levels.entries()) {
+    expect(criteria[index]).toEqual(expect.any(String));
+    expect(criteria[index]).toMatch(level);
+  }
   expect(fixture.services.classificationCalls).toEqual([]); // Never the injected /classify adapter.
 }
 
-async function finish(fixture: NativeFixture, ui: Headless, turn: Turn, report: FixtureTone | "unavailable", outcome: "allowed" | "blocked", toastSucceeded = true) {
+async function finish(fixture: NativeFixture, ui: Headless, turn: Turn, report: number | "unavailable", outcome: "allowed" | "blocked", toastSucceeded = true) {
   const event = await feedback(ui, turn);
   const [result, reply] = await bounded(Promise.all([turn.pending.result, ui.gate.replyFor(event.invocationID)]), "assembled receipt and prompt settlement");
   expect(event.sessionID).toBe(turn.sessionID);
   expect(event.outcome).toBe(outcome);
-  expect(event.message.toLowerCase()).toContain(report);
+  expect(event.message.toLowerCase()).toContain(String(report));
   expect(ui.toasts.slice(turn.toastOffset)).toHaveLength(1);
   expect(ui.toasts[turn.toastOffset]).toMatchObject({ sessionID: turn.sessionID, message: event.message });
   expect(ui.gate.requests.filter(request => request.invocationID === event.invocationID)).toEqual([
@@ -105,17 +112,17 @@ async function finish(fixture: NativeFixture, ui: Headless, turn: Turn, report: 
   return event;
 }
 
-it("assembled default package reports all five choices, allows rude by default, and sends only the current message", async () => {
+it("assembled default package reports all five scores, allows low scores by default, and sends only the current message", async () => {
   const fixture = await nativeFixture("assembled-default");
   try {
     const ui = await headless(fixture);
     const target = await session(fixture);
     const texts: string[] = [];
-    for (const tone of labels) {
-      const text = `assembled-current-${tone}`;
+    for (const score of scores) {
+      const text = `assembled-current-${score}`;
       texts.push(text);
-      const turn = start(fixture, ui, target.id, text, { kind: "choice", tone });
-      await finish(fixture, ui, turn, tone, "allowed");
+      const turn = start(fixture, ui, target.id, text, { kind: "score", score });
+      await finish(fixture, ui, turn, score, "allowed");
     }
     expect(fixture.services.decision.requests.map(request => request.state)).toEqual(texts);
     expect((await messages(fixture, target.id)).filter(message => message.type === "user").map(message => message.text)).toEqual(texts);
@@ -128,7 +135,7 @@ it("assembled opt-in blocks rude and abusive after toast receipt, then accepts a
   try {
     const ui = await headless(fixture, true);
     const target = await session(fixture);
-    const rude = start(fixture, ui, target.id, "assembled-held-rude", { kind: "choice", tone: "rude" }, true);
+    const rude = start(fixture, ui, target.id, "assembled-held-rude", { kind: "score", score: 1 }, true);
     await bounded(fixture.services.decision.seen(rude.text), "real Decision request");
     expect(rude.pending.settled()).toBe(false);
     expect(ui.toasts).toEqual([]);
@@ -141,11 +148,11 @@ it("assembled opt-in blocks rude and abusive after toast receipt, then accepts a
     expect(rude.pending.settled()).toBe(false);
     await noAdmission(fixture, target.id, rude.id, rude.baseline, ui.observer);
     ui.gate.release();
-    await finish(fixture, ui, rude, "rude", "blocked");
-    const abusive = start(fixture, ui, target.id, "assembled-abusive", { kind: "choice", tone: "abusive" });
-    await finish(fixture, ui, abusive, "abusive", "blocked");
-    const edited = start(fixture, ui, target.id, "assembled-edited-neutral", { kind: "choice", tone: "neutral" });
-    await finish(fixture, ui, edited, "neutral", "allowed");
+    await finish(fixture, ui, rude, 1, "blocked");
+    const abusive = start(fixture, ui, target.id, "assembled-abusive", { kind: "score", score: 0 });
+    await finish(fixture, ui, abusive, 0, "blocked");
+    const edited = start(fixture, ui, target.id, "assembled-edited-neutral", { kind: "score", score: 3 });
+    await finish(fixture, ui, edited, 3, "allowed");
     const requests = fixture.services.decision.requests.length;
     const dispatches = fixture.services.providerAttempts;
     const retry = await fixture.client.session.prompt({ sessionID: target.id, id: edited.id, text: edited.text }, fixture.options());
@@ -158,16 +165,16 @@ it("assembled opt-in blocks rude and abusive after toast receipt, then accepts a
   } finally { await fixture.close(); }
 });
 
-it("assembled rejectedCategories override replaces rude/abusive defaults", async () => {
+it("assembled fractional cutoff blocks strictly below and allows equality", async () => {
   const fixture = await nativeFixture("assembled-override");
   try {
     const ui = await headless(fixture);
     const target = await session(fixture);
-    for (const tone of ["frustrated", "rude", "abusive"] as const) {
-      const turn = start(fixture, ui, target.id, `assembled-override-${tone}`, { kind: "choice", tone });
-      await finish(fixture, ui, turn, tone, tone === "frustrated" ? "blocked" : "allowed");
+    for (const score of [2, 2.24, 2.25, 2.26] as const) {
+      const turn = start(fixture, ui, target.id, `assembled-override-${score}`, { kind: "score", score });
+      await finish(fixture, ui, turn, score, score < 2.25 ? "blocked" : "allowed");
     }
-    await fixture.recordReceipt({ status: "passed", categoryOverrideVerified: true });
+    await fixture.recordReceipt({ status: "passed", cutoffOverrideVerified: true });
   } finally { await fixture.close(); }
 });
 
@@ -195,13 +202,13 @@ it("assembled blocked decision remains blocked when the production toast invocat
   try {
     const ui = await headless(fixture, true, true);
     const target = await session(fixture);
-    const turn = start(fixture, ui, target.id, "assembled-failed-toast-abusive", { kind: "choice", tone: "abusive" });
+    const turn = start(fixture, ui, target.id, "assembled-failed-toast-abusive", { kind: "score", score: 0 });
     const event = await feedback(ui, turn);
     expect(await bounded(ui.gate.started, "failed toast negative receipt")).toEqual({ invocationID: event.invocationID, displayed: false, directory: fixture.location.directory });
     expect(turn.pending.settled()).toBe(false);
     await noAdmission(fixture, target.id, turn.id, turn.baseline, ui.observer);
     ui.gate.release();
-    await finish(fixture, ui, turn, "abusive", "blocked", false);
+    await finish(fixture, ui, turn, 0, "blocked", false);
     await fixture.recordReceipt({ status: "passed", failedToastStillBlocked: true, negativeReceiptFromProductionHandler: true });
   } finally { await fixture.close(); }
 });
@@ -213,8 +220,8 @@ it("assembled concurrent prompt IDs retain separate production feedback receipts
     const first = await session(fixture);
     const second = await session(fixture);
     const turns = [
-      start(fixture, ui, first.id, "assembled-concurrent-rude", { kind: "choice", tone: "rude" }),
-      start(fixture, ui, second.id, "assembled-concurrent-abusive", { kind: "choice", tone: "abusive" }),
+      start(fixture, ui, first.id, "assembled-concurrent-rude", { kind: "score", score: 1 }),
+      start(fixture, ui, second.id, "assembled-concurrent-abusive", { kind: "score", score: 0 }),
     ];
     const events = await Promise.all(turns.map(turn => feedback(ui, turn)));
     const deadline = Date.now() + 1000;

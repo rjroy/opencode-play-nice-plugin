@@ -32,7 +32,7 @@ the actual package `./tui` export; native inventory must expose server/TUI/RPC
 features. This is package/API evidence, not a rendered native TUI host.
 
 Approved guard profiles permit only the owned package and fake loopback Decision
-endpoint/provider. Scripted choice replies, HTTP error, malformed answer and a
+endpoint/provider. Scripted score replies, HTTP error, malformed answer and a
 held timeout exercise the real Decision client; no local `d3` call is automatic.
 Coverage includes all five reports, opt-in/default/override rejection, current
 text without earlier history, receipt ordering, no blocked admission/dispatch,

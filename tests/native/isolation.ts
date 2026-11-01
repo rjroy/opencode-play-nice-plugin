@@ -13,7 +13,7 @@ export function fixtureConfig(origin: string, pluginPackage: string, profile: Fi
   const options = profile === "boundary" ? { classificationURL: `${origin}/classify`, feedbackTimeoutMs }
     : { endpoint: `${origin}/v1/systemone`, timeoutMs: 2000,
       ...(profile === "assembled-default" ? {} : { autoReject: true }),
-      ...(profile === "assembled-override" ? { rejectedCategories: ["frustrated"] } : {}) };
+      ...(profile === "assembled-override" ? { rejectBelowScore: 2.25 } : {}) };
   return {
     model: "fixture-provider/fixture-model", update: "disable", share: "disabled", snapshots: false,
     plugins: [{ package: pluginPackage, options }],
