@@ -1,10 +1,10 @@
-/** Ordered from least to most kind; array positions define the score levels. */
+/** Ordered tone levels; array positions define the score levels. */
 export const toneCriteria: readonly string[] = Object.freeze([
-  "Abusive: severe personal abuse, threats, harassment, or hateful attacks directed at a person or group.",
-  "Rude: disrespectful or insulting remarks directed at a person, without threats, hate, or severe abuse.",
-  "Frustrated: expresses frustration or dissatisfaction, including incidental profanity, without attacking a person.",
-  "Neutral: matter-of-fact requests, blunt criticism, or quoted hostile words without a hostile attitude toward a person.",
-  "Kind: friendly, appreciative, considerate, or supportive communication.",
+  "Abusive: severe personal abuse, threats, harassment, or hateful attacks directed at a person, group, or AI.",
+  "Rude: personal insults, humiliation, or overt contempt directed at a person, group, or AI, without severe abuse.",
+  "Dismissive: belittling or dismissing a recipient or their contribution, without overt personal insults or severe abuse.",
+  "Neutral: matter-of-fact requests, direct criticism, dissatisfaction, frustration, urgency, or firm boundaries without belittling or attacking a recipient.",
+  "Kind: friendly, appreciative, considerate, or supportive communication when expressed, not a required style.",
 ]);
 
 /** Scores have already been validated; each criterion starts with its identifier. */
@@ -14,4 +14,4 @@ export function toneIdentifier(score: number): string {
   return criterion.slice(0, criterion.indexOf(":")).toLowerCase();
 }
 
-export const toneInstructions = "Rate the tone of the current user message, not the user's character. Distinguish the user's own attitude from words merely quoted or discussed; profanity alone does not imply a personal attack.";
+export const toneInstructions = "Rate the wording of the current user message, not the user's character. Apply the same communication standards whether the recipient is human or AI, without attributing feelings to AI. Distinguish the user's own attitude from words merely quoted or discussed. Profanity, frustration, dissatisfaction, urgency, directness, or firm boundaries alone do not imply an attack. Neutral directness is successful communication; warmth is optional and context-dependent, not a universal target. Consider missing context and do not require performative politeness or emotional suppression.";

@@ -49,6 +49,14 @@ describe("reflection admission and commands", () => {
       expect(task).toContain("first"); expect(task).toContain("second");
       expect(task).toContain("2.5"); expect(task).toContain("What went wrong?");
       expect(task).toMatch(/untrusted/i);
+      expect(task).toContain("2 dismissive, 3 neutral, 4 kind");
+      expect(task).toMatch(/wording may be appropriate and need no rewrite/i);
+      expect(task).toMatch(/do not infer a recurring habit from isolated evidence/i);
+      expect(task).toMatch(/selected records are incomplete evidence/i);
+      expect(task).toMatch(/retained records may predate this rubric change, when 2 meant frustrated/i);
+      expect(task).toMatch(/numeric score or label alone cannot establish dismissiveness/i);
+      expect(task).toMatch(/old score is not evidence of bad habits/i);
+      expect(task).toMatch(/evaluate the original wording and available context/i);
       expect(task).not.toContain("other-session-private");
       expect(classify).toHaveBeenCalledTimes(3);
     } finally { await fixture.close(); }

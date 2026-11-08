@@ -3,7 +3,9 @@
 Play Nice is a private, unreleased plugin for OpenCode 2.2.2 V2. It scores the
 tone of the current user message, attempts to show the result, and can optionally
 reject a message before admission. It judges wording, not character. You can
-also ask it to reflect on selected past evaluations in the current session.
+also ask it to reflect on selected past evaluations in the current session. The
+aim is to practice communication habits transferable to human interactions, not
+to require courtesy toward AI or judge anyone's character.
 Play Nice skips scoring and rejection for sessions it identifies as child
 sessions. If the session lookup fails or times out, normal classification and
 rejection still apply.
@@ -61,11 +63,18 @@ guarantee that a toast was rendered or read.
 
 ## Scores and feedback
 
-The scale is **0 abusive, 1 rude, 2 frustrated, 3 neutral, 4 kind**. Scores
+The scale is **0 abusive, 1 rude, 2 dismissive, 3 neutral, 4 kind**. Scores
 may be fractional. They represent a position on the scale, not confidence or a
 verdict about the author. The feedback displays the score to two decimal places
 and the nearest label, with halfway values rounded toward the higher label.
-Model judgments can be wrong, including when text contains quotes or criticism.
+Dismissive means belittling or dismissing a recipient or their contribution,
+not merely expressing frustration. Contempt, humiliation, and personal attacks
+matter whether directed at a human or AI, without assuming AI has feelings.
+Direct criticism, dissatisfaction, frustration, profanity, urgency, and firm
+boundaries are not attacks by themselves. Neutral directness is successful
+communication; warmth is optional and depends on context, so 4 is not a
+universal target. Model judgments can be wrong, including when text contains
+quotes or criticism.
 
 By default, scored messages are allowed. With `autoReject: true`, the plugin
 compares the unrounded score with `rejectBelowScore` and rejects scores strictly
@@ -90,9 +99,19 @@ boundary against other plugins or other ways to interact with OpenCode.
 The plugin records evaluated attempts with scores from **2 through 3**,
 inclusive, including rejected attempts. It stores the original wording,
 fractional score, time, session and message IDs, scoring model, and policy
-outcome. This range is selected evidence, not proof that the wording was rude.
-Reflection asks the session agent to consider the evidence and available recent
-context, suggest alternatives that preserve intent, and allow for scorer error.
+outcome. This range is selected evidence, not proof that the wording was rude or
+a representative account of the session. Scores outside the range, unavailable
+evaluations, and unrecorded messages are absent, and recent context may also be
+incomplete. Reflection asks the session agent to consider transferable patterns
+without inferring recurring habits from isolated evidence, allow for scorer error
+and missing context, and preserve intent, urgency, and boundaries. It may find
+the wording appropriate and suggest no rewrite.
+
+Retained records may predate the rubric change, when 2 meant frustrated rather
+than dismissive. Records do not identify which rubric produced their scores. A
+score or label alone cannot establish dismissiveness or evidence a bad habit;
+reflection should evaluate the original wording and available context against
+the current communication principles instead. Existing records are retained.
 
 The store is local to the plugin location. It retains at most 200 records per
 location and reflection selects at most the latest 10 for the current session.

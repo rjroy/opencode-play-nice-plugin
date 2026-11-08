@@ -8,8 +8,8 @@ import { memoryStorage } from "./reflection-helpers.js";
 
 const scores = [
   [0, "abusive"], [0.49, "abusive"], [0.5, "rude"],
-  [1, "rude"], [1.49, "rude"], [1.5, "frustrated"],
-  [2, "frustrated"], [2.49, "frustrated"], [2.5, "neutral"],
+  [1, "rude"], [1.49, "rude"], [1.5, "dismissive"],
+  [2, "dismissive"], [2.49, "dismissive"], [2.5, "neutral"],
   [3, "neutral"], [3.49, "neutral"], [3.5, "kind"], [4, "kind"],
 ] as const;
 const privateText = "fixture-private-message";
@@ -173,7 +173,7 @@ describe("default server policy composition", () => {
     } finally { await fixture.close(); }
   });
 
-  it.each([[0, "blocked", "abusive"], [1, "blocked", "rude"], [1.49, "blocked", "rude"], [1.5, "allowed", "frustrated"], [1.51, "allowed", "frustrated"], [4, "allowed", "kind"]] as const)(
+  it.each([[0, "blocked", "abusive"], [1, "blocked", "rude"], [1.49, "blocked", "rude"], [1.5, "allowed", "dismissive"], [1.51, "allowed", "dismissive"], [4, "allowed", "kind"]] as const)(
     "enforces the default cutoff for score %s", async (score, outcome, identifier) => {
       const fixture = await harness({ autoReject: true }, fetchTone(score));
       try {
@@ -209,7 +209,7 @@ describe("default server policy composition", () => {
         expect(await fixture.submit().then(() => "allowed", () => "blocked")).toBe(outcome);
         expect(fixture.feedback[0]?.outcome).toBe(outcome);
         expect(fixture.feedback[0]?.message).toContain(String(score));
-        expect(fixture.feedback[0]?.message).toMatch(/\bfrustrated\b/i);
+        expect(fixture.feedback[0]?.message).toMatch(/\bdismissive\b/i);
       } finally { await fixture.close(); }
     },
   );

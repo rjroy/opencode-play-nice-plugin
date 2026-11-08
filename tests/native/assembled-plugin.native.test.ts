@@ -11,7 +11,7 @@ import { completed, identity, messages, noAdmission, prompt, session } from "./s
 import { bounded, pause, record } from "./support.js";
 
 const scores = [0, 1, 2, 3, 4] as const;
-const levels = [/abus|threat|harass/i, /rude|disrespect|insult/i, /frustrat|dissatisf/i, /neutral|matter.of.fact/i, /kind|friendly|support|appreciat/i] as const;
+const levels = [/abus|threat|harass/i, /rude|disrespect|insult/i, /dismissive|belittl/i, /neutral|matter.of.fact/i, /kind|friendly|support|appreciat/i] as const;
 
 async function headless(fixture: NativeFixture, heldReceipt = false, failedToast = false) {
   const order: string[] = [];
