@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifyTone as scoreTone, type ClassificationRequest as ScoringRequest } from "../src/decision.js";
 
-const levels = [/abus|threat|harass/i, /rude|disrespect|insult/i, /frustrat|dissatisf/i, /neutral|matter.of.fact/i, /kind|friendly|support|appreciat/i] as const;
+const levels = [/abus|threat|harass/i, /rude|disrespect|insult/i, /dismissive|belittl/i, /neutral|matter.of.fact/i, /kind|friendly|support|appreciat/i] as const;
 const message = "Test-owned current message";
 const request = (overrides: Partial<ScoringRequest> = {}): ScoringRequest => ({
   text: message, deadline: Date.now() + 10_000, ...overrides,
@@ -41,6 +41,9 @@ describe("Decision score client", () => {
       expect(parsed.questions.tone.criteria[index]).toEqual(expect.any(String));
       expect(parsed.questions.tone.criteria[index]).toMatch(level);
     }
+    expect(parsed.questions.tone.instructions).toMatch(/quoted or discussed/i);
+    expect(parsed.questions.tone.instructions).toMatch(/warmth is optional/i);
+    expect(parsed.questions.tone.instructions).toMatch(/frustration.*alone do not imply an attack/i);
     expect(Object.keys(body as object).sort()).toEqual(["model", "questions", "state"]);
   });
 
